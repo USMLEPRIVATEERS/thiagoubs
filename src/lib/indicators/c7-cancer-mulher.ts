@@ -3,6 +3,25 @@ import type { PatientData } from './engine'
 import { isWithinPeriod, daysUntilDue, getDueDate, ageInYears } from '@/lib/utils/dates'
 import { getClassification } from '@/lib/utils/scoring'
 
+// SIGTAP procedure codes
+const PAPANICOLAU_CODES = [
+  '02.03.01.001-9', // Exame citopatologico cervico vaginal
+  '02.03.01.008-6', // Exame citopatologico cervico vaginal/microflora
+]
+const MAMOGRAFIA_CODES = [
+  '02.04.03.018-8', // Mamografia bilateral para rastreamento
+  '02.04.03.003-0', // Mamografia bilateral
+]
+// HPV vaccine codes no e-SUS
+const HPV_CODES = ['04', '49', '104', '105']
+
+function isMedEnf(cbo?: string, type?: string): boolean {
+  if (cbo) {
+    return ['2231', '2251', '2252', '2253', '2235'].some(prefix => cbo.startsWith(prefix))
+  }
+  return type === 'medico' || type === 'enfermeiro'
+}
+
 export function calculateC7(data: PatientData): IndicatorResult {
   const { patient, consultations, procedures, vaccinations } = data
   const age = ageInYears(patient.date_of_birth)
@@ -14,11 +33,12 @@ export function calculateC7(data: PatientData): IndicatorResult {
   if (age >= 25 && age <= 64) {
     maxScore += 20
     const papProcs = procedures
-      .filter(p =>
-        p.procedure_name?.toLowerCase().includes('papanicolau') ||
-        p.procedure_name?.toLowerCase().includes('citopatologico') ||
-        p.procedure_name?.toLowerCase().includes('colo')
-      )
+      .filter(p => {
+        if (PAPANICOLAU_CODES.includes(p.procedure_code)) return true
+        const name = (p.procedure_name || '').toLowerCase()
+        return name.includes('papanicolau') || name.includes('citopatologico') ||
+          name.includes('citopatológico') || name.includes('colo uterino')
+      })
       .sort((a, b) => b.procedure_date.localeCompare(a.procedure_date))
     const lastPap = papProcs[0]?.procedure_date || null
     const achievedA = isWithinPeriod(lastPap, 1095) // 36 meses
@@ -36,8 +56,11 @@ export function calculateC7(data: PatientData): IndicatorResult {
   // B: Vacina HPV - 9-14 anos (meninas) (30 pts)
   if (age >= 9 && age <= 14 && patient.sex === 'F') {
     maxScore += 30
-    const hpvVaccines = vaccinations
-      .filter(v => v.vaccine_name?.toLowerCase().includes('hpv'))
+    const hpvVaccines = vaccinations.filter(v => {
+      if (HPV_CODES.includes(v.vaccine_code)) return true
+      const name = (v.vaccine_name || '').toLowerCase()
+      return name.includes('hpv') || name.includes('papilomavirus')
+    })
     const achievedB = hpvVaccines.length >= 1
     if (achievedB) totalScore += 30
     practices.push({
@@ -49,19 +72,17 @@ export function calculateC7(data: PatientData): IndicatorResult {
     })
   }
 
-  // C: Consulta saude sexual/reprodutiva - 14-69 anos - 12 meses (30 pts)
+  // C: Atendimento saude sexual/reprodutiva - 14-69 anos - 12 meses (30 pts)
   if (age >= 14 && age <= 69) {
     maxScore += 30
     const srConsults = consultations
-      .filter(c =>
-        c.professional_type === 'medico' || c.professional_type === 'enfermeiro'
-      )
+      .filter(c => isMedEnf(c.professional_cbo, c.professional_type))
       .sort((a, b) => b.consultation_date.localeCompare(a.consultation_date))
     const lastSR = srConsults[0]?.consultation_date || null
     const achievedC = isWithinPeriod(lastSR, 365)
     if (achievedC) totalScore += 30
     practices.push({
-      code: 'C', name: 'Consulta saude sexual/reprodutiva (12 meses)',
+      code: 'C', name: 'Atendimento saude sexual/reprodutiva (12 meses)',
       achieved: achievedC, points: achievedC ? 30 : 0, maxPoints: 30,
       lastDate: lastSR,
       dueDate: getDueDate(lastSR, 365),
@@ -74,10 +95,11 @@ export function calculateC7(data: PatientData): IndicatorResult {
   if (age >= 50 && age <= 69) {
     maxScore += 20
     const mamProcs = procedures
-      .filter(p =>
-        p.procedure_name?.toLowerCase().includes('mamografia') ||
-        p.procedure_name?.toLowerCase().includes('mama')
-      )
+      .filter(p => {
+        if (MAMOGRAFIA_CODES.includes(p.procedure_code)) return true
+        const name = (p.procedure_name || '').toLowerCase()
+        return name.includes('mamografia') || name.includes('mamografica')
+      })
       .sort((a, b) => b.procedure_date.localeCompare(a.procedure_date))
     const lastMam = mamProcs[0]?.procedure_date || null
     const achievedD = isWithinPeriod(lastMam, 730) // 24 meses

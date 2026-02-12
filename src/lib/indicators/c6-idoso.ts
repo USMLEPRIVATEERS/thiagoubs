@@ -3,7 +3,23 @@ import type { PatientData } from './engine'
 import { isWithinPeriod, daysUntilDue, getDueDate } from '@/lib/utils/dates'
 import { getClassification } from '@/lib/utils/scoring'
 
-const ACS_CBO = '5151-05'
+const ACS_CBO = '515105'
+const TACS_CBO = '322255'
+
+function isMedEnf(cbo?: string, type?: string): boolean {
+  if (cbo) {
+    return ['2231', '2251', '2252', '2253', '2235'].some(prefix => cbo.startsWith(prefix))
+  }
+  return type === 'medico' || type === 'enfermeiro'
+}
+
+function isAcsTacs(cbo: string): boolean {
+  const norm = cbo.replace(/[-.\s]/g, '')
+  return norm === ACS_CBO || norm === TACS_CBO
+}
+
+// Codigos de vacina influenza no e-SUS
+const INFLUENZA_CODES = ['86', '85', '37', '39']
 
 export function calculateC6(data: PatientData): IndicatorResult {
   const { patient, consultations, measurements, homeVisits, vaccinations } = data
@@ -14,8 +30,7 @@ export function calculateC6(data: PatientData): IndicatorResult {
 
   // A: >= 1 consulta (medico/enfermeiro) nos ultimos 365 dias (25 pts)
   const medEnfConsults = consultations
-    .filter(c => c.professional_type === 'medico' || c.professional_type === 'enfermeiro' ||
-      ['2231', '2251', '2252', '2253', '2235'].some(cbo => c.professional_cbo?.startsWith(cbo)))
+    .filter(c => isMedEnf(c.professional_cbo, c.professional_type))
     .sort((a, b) => b.consultation_date.localeCompare(a.consultation_date))
   const lastConsult = medEnfConsults[0]?.consultation_date || null
   const achievedA = isWithinPeriod(lastConsult, 365)
@@ -45,7 +60,7 @@ export function calculateC6(data: PatientData): IndicatorResult {
     details: achievedB ? 'Peso/Altura em dia' : lastWH ? 'Peso/Altura vencido' : 'Nenhum registro peso/altura',
   })
 
-  // C: >= 2 visitas ACS (intervalo min 30 dias) nos ultimos 365 dias (25 pts)
+  // C: >= 2 visitas ACS/TACS (intervalo min 30 dias) nos ultimos 365 dias (25 pts)
   if (isEAP) {
     maxScore -= 25
     practices.push({
@@ -57,7 +72,7 @@ export function calculateC6(data: PatientData): IndicatorResult {
     })
   } else {
     const acsVisits = homeVisits
-      .filter(v => v.visitor_cbo === ACS_CBO)
+      .filter(v => isAcsTacs(v.visitor_cbo))
       .filter(v => isWithinPeriod(v.visit_date, 365))
       .sort((a, b) => a.visit_date.localeCompare(b.visit_date))
 
@@ -82,7 +97,7 @@ export function calculateC6(data: PatientData): IndicatorResult {
     const lastAcsVisit = acsVisits.length > 0 ? acsVisits[acsVisits.length - 1].visit_date : null
     if (achievedC) totalScore += 25
     practices.push({
-      code: 'C', name: 'Visitas ACS (12 meses, min 30d intervalo)',
+      code: 'C', name: 'Visitas ACS/TACS (12 meses, min 30d intervalo)',
       achieved: achievedC, points: achievedC ? 25 : 0, maxPoints: 25,
       lastDate: lastAcsVisit,
       dueDate: getDueDate(lastAcsVisit, 365),
@@ -93,7 +108,11 @@ export function calculateC6(data: PatientData): IndicatorResult {
 
   // D: 1 dose vacina influenza nos ultimos 365 dias (25 pts)
   const fluVaccines = vaccinations
-    .filter(v => v.vaccine_name?.toLowerCase().includes('influenza') || v.vaccine_name?.toLowerCase().includes('gripe'))
+    .filter(v => {
+      if (INFLUENZA_CODES.includes(v.vaccine_code)) return true
+      const name = (v.vaccine_name || '').toLowerCase()
+      return name.includes('influenza') || name.includes('gripe')
+    })
     .filter(v => isWithinPeriod(v.dose_date, 365))
     .sort((a, b) => b.dose_date.localeCompare(a.dose_date))
   const lastFlu = fluVaccines[0]?.dose_date || null

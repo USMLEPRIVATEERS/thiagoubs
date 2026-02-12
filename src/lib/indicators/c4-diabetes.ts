@@ -3,8 +3,22 @@ import type { PatientData } from './engine'
 import { isWithinPeriod, daysUntilDue, getDueDate } from '@/lib/utils/dates'
 import { getClassification } from '@/lib/utils/scoring'
 
-const ACS_CBO = '5151-05'
+const ACS_CBO = '515105'
+const TACS_CBO = '322255'
 const HBA1C_CODE = '02.02.01.050-3'
+const EXAME_PE_CODE = '02.01.01.059-0' // Avaliacao/acompanhamento pe diabetico
+
+function isMedEnf(cbo?: string, type?: string): boolean {
+  if (cbo) {
+    return ['2231', '2251', '2252', '2253', '2235'].some(prefix => cbo.startsWith(prefix))
+  }
+  return type === 'medico' || type === 'enfermeiro'
+}
+
+function isAcsTacs(cbo: string): boolean {
+  const norm = cbo.replace(/[-.\s]/g, '')
+  return norm === ACS_CBO || norm === TACS_CBO
+}
 
 export function calculateC4(data: PatientData): IndicatorResult {
   const { patient, consultations, measurements, homeVisits, procedures } = data
@@ -15,8 +29,7 @@ export function calculateC4(data: PatientData): IndicatorResult {
 
   // A: >= 1 consulta (medico/enfermeiro) nos ultimos 180 dias (20 pts)
   const medEnfConsults = consultations
-    .filter(c => c.professional_type === 'medico' || c.professional_type === 'enfermeiro' ||
-      ['2231', '2251', '2252', '2253', '2235'].some(cbo => c.professional_cbo?.startsWith(cbo)))
+    .filter(c => isMedEnf(c.professional_cbo, c.professional_type))
     .sort((a, b) => b.consultation_date.localeCompare(a.consultation_date))
   const lastConsult = medEnfConsults[0]?.consultation_date || null
   const achievedA = isWithinPeriod(lastConsult, 180)
@@ -62,7 +75,7 @@ export function calculateC4(data: PatientData): IndicatorResult {
     details: achievedC ? 'Peso/Altura em dia' : lastWH ? 'Peso/Altura vencido' : 'Nenhum registro peso/altura',
   })
 
-  // D: >= 2 visitas ACS (intervalo min 30 dias) nos ultimos 365 dias (20 pts)
+  // D: >= 2 visitas ACS/TACS (intervalo min 30 dias) nos ultimos 365 dias (20 pts)
   if (isEAP) {
     maxScore -= 20
     practices.push({
@@ -74,7 +87,7 @@ export function calculateC4(data: PatientData): IndicatorResult {
     })
   } else {
     const acsVisits = homeVisits
-      .filter(v => v.visitor_cbo === ACS_CBO)
+      .filter(v => isAcsTacs(v.visitor_cbo))
       .filter(v => isWithinPeriod(v.visit_date, 365))
       .sort((a, b) => a.visit_date.localeCompare(b.visit_date))
 
@@ -99,7 +112,7 @@ export function calculateC4(data: PatientData): IndicatorResult {
     const lastAcsVisit = acsVisits.length > 0 ? acsVisits[acsVisits.length - 1].visit_date : null
     if (achievedD) totalScore += 20
     practices.push({
-      code: 'D', name: 'Visitas ACS (12 meses, min 30d intervalo)',
+      code: 'D', name: 'Visitas ACS/TACS (12 meses, min 30d intervalo)',
       achieved: achievedD, points: achievedD ? 20 : 0, maxPoints: 20,
       lastDate: lastAcsVisit,
       dueDate: getDueDate(lastAcsVisit, 365),
@@ -110,7 +123,12 @@ export function calculateC4(data: PatientData): IndicatorResult {
 
   // E: >= 1 HbA1c nos ultimos 365 dias (15 pts)
   const hba1cProcs = procedures
-    .filter(p => p.procedure_code === HBA1C_CODE || p.procedure_name?.toLowerCase().includes('hemoglobina glicada') || p.procedure_name?.toLowerCase().includes('hba1c'))
+    .filter(p =>
+      p.procedure_code === HBA1C_CODE ||
+      p.procedure_name?.toLowerCase().includes('hemoglobina glicada') ||
+      p.procedure_name?.toLowerCase().includes('hba1c') ||
+      p.procedure_name?.toLowerCase().includes('glicohemoglobina')
+    )
     .sort((a, b) => b.procedure_date.localeCompare(a.procedure_date))
   const lastHbA1c = hba1cProcs[0]?.procedure_date || null
   const achievedE = isWithinPeriod(lastHbA1c, 365)
@@ -128,13 +146,20 @@ export function calculateC4(data: PatientData): IndicatorResult {
 
   // F: >= 1 exame do pe nos ultimos 365 dias (15 pts)
   const footExams = procedures
-    .filter(p => p.procedure_name?.toLowerCase().includes('exame do pe') || p.procedure_name?.toLowerCase().includes('pe diabetico'))
+    .filter(p =>
+      p.procedure_code === EXAME_PE_CODE ||
+      p.procedure_name?.toLowerCase().includes('exame do pe') ||
+      p.procedure_name?.toLowerCase().includes('exame do pé') ||
+      p.procedure_name?.toLowerCase().includes('pe diabetico') ||
+      p.procedure_name?.toLowerCase().includes('pé diabético') ||
+      p.procedure_name?.toLowerCase().includes('avaliacao pe')
+    )
     .sort((a, b) => b.procedure_date.localeCompare(a.procedure_date))
   const lastFoot = footExams[0]?.procedure_date || null
   const achievedF = isWithinPeriod(lastFoot, 365)
   if (achievedF) totalScore += 15
   practices.push({
-    code: 'F', name: 'Exame do Pe (12 meses)',
+    code: 'F', name: 'Exame do Pe Diabetico (12 meses)',
     achieved: achievedF, points: achievedF ? 15 : 0, maxPoints: 15,
     lastDate: lastFoot,
     dueDate: getDueDate(lastFoot, 365),

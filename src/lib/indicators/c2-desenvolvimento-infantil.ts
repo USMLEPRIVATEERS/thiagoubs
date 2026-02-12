@@ -3,9 +3,34 @@ import type { PatientData } from './engine'
 import { daysSince } from '@/lib/utils/dates'
 import { getClassification } from '@/lib/utils/scoring'
 
-const ACS_CBO = '5151-05'
+const ACS_CBO = '515105'
+const TACS_CBO = '322255'
 
-const TACS_CBO = '3222-55'
+// CBOs medico/enfermeiro
+function isMedEnf(cbo?: string, type?: string): boolean {
+  if (cbo) {
+    return ['2231', '2251', '2252', '2253', '2235'].some(prefix => cbo.startsWith(prefix))
+  }
+  return type === 'medico' || type === 'enfermeiro'
+}
+
+// Codigos de vacinas conforme e-SUS/SIGTAP
+// Penta (DTP+HB+Hib) - 3 doses
+const PENTA_CODES = ['09', '17', '29', '39', '42', '43', '46', '47', '58']
+// VIP/Polio inativada - 3 doses
+const VIP_CODES = ['22', '29', '43', '58']
+// Triplice Viral / SCR - 1 dose
+const SCR_CODES = ['24', '56']
+// Pneumo 10V - 2 doses
+const PNEUMO_CODES = ['26', '59', '106', '107']
+
+function countVaccineDoses(vaccinations: { vaccine_code: string; vaccine_name?: string }[], codes: string[], namePatterns: string[]): number {
+  return vaccinations.filter(v => {
+    if (codes.includes(v.vaccine_code)) return true
+    const name = (v.vaccine_name || '').toLowerCase()
+    return namePatterns.some(p => name.includes(p))
+  }).length
+}
 
 export function calculateC2(data: PatientData): IndicatorResult {
   const { patient, consultations, measurements, homeVisits, vaccinations } = data
@@ -14,15 +39,15 @@ export function calculateC2(data: PatientData): IndicatorResult {
   let totalScore = 0
   let maxScore = 100
 
-  // A: 1a consulta ate o 30o dia de vida (20 pts)
   const dayOfBirth = patient.date_of_birth
+  const childAgeDays = daysSince(dayOfBirth)
+
+  // A: 1a consulta ate o 30o dia de vida (20 pts)
   const first30DaysConsults = consultations.filter(c => {
-    const days = daysSince(c.consultation_date)
-    const childAgeDays = daysSince(dayOfBirth)
-    if (days === null || childAgeDays === null) return false
-    const consultChildAge = childAgeDays - days
-    return consultChildAge <= 30 && consultChildAge >= 0 &&
-      ['2231', '2251', '2252', '2253', '2235'].some(cbo => c.professional_cbo?.startsWith(cbo) || c.professional_type === 'medico' || c.professional_type === 'enfermeiro')
+    const consultDays = daysSince(c.consultation_date)
+    if (consultDays === null || childAgeDays === null) return false
+    const consultChildAge = childAgeDays - consultDays
+    return consultChildAge <= 30 && consultChildAge >= 0 && isMedEnf(c.professional_cbo, c.professional_type)
   })
   const achievedA = first30DaysConsults.length >= 1
   if (achievedA) totalScore += 20
@@ -39,10 +64,7 @@ export function calculateC2(data: PatientData): IndicatorResult {
   })
 
   // B: >= 9 consultas (medico/enfermeiro) ate 2 anos (20 pts)
-  const medEnfConsults = consultations.filter(c =>
-    c.professional_type === 'medico' || c.professional_type === 'enfermeiro' ||
-    ['2231', '2251', '2252', '2253', '2235'].some(cbo => c.professional_cbo?.startsWith(cbo))
-  )
+  const medEnfConsults = consultations.filter(c => isMedEnf(c.professional_cbo, c.professional_type))
   const achievedB = medEnfConsults.length >= 9
   if (achievedB) totalScore += 20
   practices.push({
@@ -78,7 +100,6 @@ export function calculateC2(data: PatientData): IndicatorResult {
   })
 
   // D: >= 2 visitas domiciliares do ACS/TACS (1a ate 30 dias, 2a ate 6 meses) (20 pts)
-  // Isento para equipes eAP tipo 76
   if (isEAP) {
     maxScore -= 20
     practices.push({
@@ -90,7 +111,11 @@ export function calculateC2(data: PatientData): IndicatorResult {
       exempt: true,
     })
   } else {
-    const acsVisits = homeVisits.filter(v => v.visitor_cbo === ACS_CBO || v.visitor_cbo === TACS_CBO)
+    const normCbo = (cbo: string) => cbo.replace(/[-.\s]/g, '')
+    const acsVisits = homeVisits.filter(v => {
+      const cbo = normCbo(v.visitor_cbo || '')
+      return cbo === ACS_CBO || cbo === TACS_CBO
+    })
     const achievedD = acsVisits.length >= 2
     if (achievedD) totalScore += 20
     practices.push({
@@ -108,12 +133,28 @@ export function calculateC2(data: PatientData): IndicatorResult {
     })
   }
 
-  // E: Vacinacao completa (20 pts)
-  const achievedE = vaccinations.length >= 6
+  // E: Vacinacao completa - Penta(3), VIP(3), Triplice Viral(1), Pneumo 10V(2) (20 pts)
+  const pentaDoses = countVaccineDoses(vaccinations, PENTA_CODES, ['penta', 'dtp', 'pentavalente'])
+  const vipDoses = countVaccineDoses(vaccinations, VIP_CODES, ['vip', 'polio inativada', 'salk'])
+  const scrDoses = countVaccineDoses(vaccinations, SCR_CODES, ['triplice viral', 'scr', 'sarampo'])
+  const pneumoDoses = countVaccineDoses(vaccinations, PNEUMO_CODES, ['pneumo', 'pneumococica'])
+
+  const pentaOk = pentaDoses >= 3
+  const vipOk = vipDoses >= 3
+  const scrOk = scrDoses >= 1
+  const pneumoOk = pneumoDoses >= 2
+  const achievedE = pentaOk && vipOk && scrOk && pneumoOk
+
   if (achievedE) totalScore += 20
+  const vaccineDetails: string[] = []
+  vaccineDetails.push(`Penta ${pentaDoses}/3${pentaOk ? ' OK' : ''}`)
+  vaccineDetails.push(`VIP ${vipDoses}/3${vipOk ? ' OK' : ''}`)
+  vaccineDetails.push(`SCR ${scrDoses}/1${scrOk ? ' OK' : ''}`)
+  vaccineDetails.push(`Pneumo ${pneumoDoses}/2${pneumoOk ? ' OK' : ''}`)
+
   practices.push({
     code: 'E',
-    name: 'Vacinacao completa',
+    name: 'Vacinacao completa (Penta+VIP+SCR+Pneumo)',
     achieved: achievedE,
     points: achievedE ? 20 : 0,
     maxPoints: 20,
@@ -122,7 +163,7 @@ export function calculateC2(data: PatientData): IndicatorResult {
       : null,
     dueDate: null,
     daysRemaining: null,
-    details: `${vaccinations.length} vacinas registradas`,
+    details: vaccineDetails.join(' | '),
   })
 
   const percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0
