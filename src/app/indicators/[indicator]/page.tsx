@@ -9,6 +9,13 @@ export function generateStaticParams() {
     { indicator: 'c5' },
     { indicator: 'c6' },
     { indicator: 'c7' },
+    { indicator: 'C1' },
+    { indicator: 'C2' },
+    { indicator: 'C3' },
+    { indicator: 'C4' },
+    { indicator: 'C5' },
+    { indicator: 'C6' },
+    { indicator: 'C7' },
   ]
 }
 
