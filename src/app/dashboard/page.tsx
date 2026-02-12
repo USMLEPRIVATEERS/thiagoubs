@@ -1,137 +1,40 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
-import IndicatorCard from '@/components/dashboard/IndicatorCard'
-import UrgentActions from '@/components/dashboard/UrgentActions'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
-import type { IndicatorSummary, UrgentAction } from '@/types/indicator'
-import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination, Pregnancy } from '@/types/database'
+import type { Patient } from '@/types/database'
 import { INDICATOR_NAMES, INDICATOR_DESCRIPTIONS } from '@/types/indicator'
-import { calculateAllIndicators, getUrgentActions, getApplicableIndicators } from '@/lib/indicators/engine'
-import type { PatientData } from '@/lib/indicators/engine'
-import { getClassification } from '@/lib/utils/scoring'
+import { INDICATOR_TAGS, INDICATOR_COMPLIANCE_TAGS, getTagColor } from '@/lib/tags'
 
 export default function DashboardPage() {
-  const [summaries, setSummaries] = useState<IndicatorSummary[]>([])
-  const [urgentActions, setUrgentActions] = useState<UrgentAction[]>([])
+  const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [microAreas, setMicroAreas] = useState<number[]>([])
   const [selectedMicroAreas, setSelectedMicroAreas] = useState<number[]>([])
-  const [searchTerm, setSearchTerm] = useState('')
+  const [filterTag, setFilterTag] = useState<string>('all')
   const supabase = createClient()
 
   const loadData = useCallback(async () => {
     setLoading(true)
 
-    // Fetch all active patients
-    const { data: patients } = await supabase
+    const { data } = await supabase
       .from('patients')
       .select('*')
       .eq('status', 'active')
+      .order('name')
 
-    if (!patients || patients.length === 0) {
-      setSummaries(
-        ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'].map(code => ({
-          code,
-          name: INDICATOR_NAMES[code],
-          description: INDICATOR_DESCRIPTIONS[code],
-          totalPatients: 0,
-          avgScore: 0,
-          classification: 'regular' as const,
-          counts: { otimo: 0, bom: 0, suficiente: 0, regular: 0 },
-        }))
-      )
-      setUrgentActions([])
-      setLoading(false)
-      return
-    }
+    const pts = (data as Patient[]) || []
+    setPatients(pts)
 
-    // Get unique micro areas
-    const areas = [...new Set(patients.map(p => p.micro_area).filter(Boolean) as number[])].sort()
+    const areas = [...new Set(pts.map(p => p.micro_area).filter(Boolean) as number[])].sort()
     setMicroAreas(areas)
     if (selectedMicroAreas.length === 0) {
       setSelectedMicroAreas(areas)
     }
 
-    // Filter patients by selected micro areas
-    const filteredPatients = patients.filter(p =>
-      selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area)
-    )
-
-    const patientIds = filteredPatients.map(p => p.id)
-
-    // Fetch all related data in parallel
-    const [conditions, consultations, measurements, procedures, homeVisits, vaccinations, pregnancies] = await Promise.all([
-      supabase.from('conditions').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('consultations').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('measurements').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('procedures').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('home_visits').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('vaccinations').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('pregnancies').select('*').in('patient_id', patientIds).then(r => r.data || []),
-    ])
-
-    // Calculate indicators for each patient
-    const indicatorResults: Record<string, { scores: number[], maxScores: number[], counts: { otimo: number, bom: number, suficiente: number, regular: number } }> = {}
-    const allActions: UrgentAction[] = []
-
-    for (const code of ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7']) {
-      indicatorResults[code] = { scores: [], maxScores: [], counts: { otimo: 0, bom: 0, suficiente: 0, regular: 0 } }
-    }
-
-    for (const patient of filteredPatients) {
-      const patientData: PatientData = {
-        patient: patient as Patient,
-        conditions: (conditions as Condition[]).filter(c => c.patient_id === patient.id),
-        consultations: (consultations as Consultation[]).filter(c => c.patient_id === patient.id),
-        measurements: (measurements as Measurement[]).filter(m => m.patient_id === patient.id),
-        procedures: (procedures as Procedure[]).filter(p => p.patient_id === patient.id),
-        homeVisits: (homeVisits as HomeVisit[]).filter(v => v.patient_id === patient.id),
-        vaccinations: (vaccinations as Vaccination[]).filter(v => v.patient_id === patient.id),
-        pregnancies: (pregnancies as Pregnancy[]).filter(p => p.patient_id === patient.id),
-      }
-
-      const applicable = getApplicableIndicators(patientData)
-      const results = calculateAllIndicators(patientData)
-
-      for (const result of results) {
-        const ir = indicatorResults[result.indicator]
-        if (ir) {
-          ir.scores.push(result.percentage)
-          ir.maxScores.push(result.maxScore)
-          const cls = result.classification
-          ir.counts[cls]++
-        }
-      }
-
-      const actions = getUrgentActions(patientData)
-      allActions.push(...actions)
-    }
-
-    // Build summaries
-    const newSummaries: IndicatorSummary[] = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'].map(code => {
-      const ir = indicatorResults[code]
-      const total = ir.scores.length
-      const avg = total > 0 ? ir.scores.reduce((a, b) => a + b, 0) / total : 0
-      return {
-        code,
-        name: INDICATOR_NAMES[code],
-        description: INDICATOR_DESCRIPTIONS[code],
-        totalPatients: total,
-        avgScore: avg,
-        classification: getClassification(avg, 100),
-        counts: ir.counts,
-      }
-    })
-
-    setSummaries(newSummaries)
-    setUrgentActions(allActions.sort((a, b) => {
-      if (a.type === 'vencido' && b.type !== 'vencido') return -1
-      if (a.type !== 'vencido' && b.type === 'vencido') return 1
-      return (b.daysOverdue || 0) - (a.daysOverdue || 0)
-    }))
     setLoading(false)
   }, [supabase, selectedMicroAreas])
 
@@ -139,19 +42,44 @@ export default function DashboardPage() {
     loadData()
   }, [loadData])
 
-  function handleToggleMicroArea(area: number) {
-    setSelectedMicroAreas(prev =>
-      prev.includes(area) ? prev.filter(a => a !== area) : [...prev, area]
+  // Filter patients by microarea and tag
+  const filteredPatients = patients.filter(p => {
+    const matchesMA = selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area!)
+    const matchesTag = filterTag === 'all' || (p.tags || []).includes(filterTag)
+    return matchesMA && matchesTag
+  })
+
+  // Collect all used tags for the dropdown
+  const usedTags = [...new Set(patients.flatMap(p => p.tags || []))].sort()
+
+  // Calculate tag-based indicator summaries
+  const indicatorSummaries = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'].map(code => {
+    const eligibilityTags = INDICATOR_TAGS[code] || []
+    const complianceTags = INDICATOR_COMPLIANCE_TAGS[code] || []
+
+    // Patients eligible for this indicator (have at least one eligibility tag)
+    const eligible = filteredPatients.filter(p =>
+      eligibilityTags.some(t => (p.tags || []).includes(t))
     )
-  }
 
-  function handleSelectAllMicroAreas() {
-    setSelectedMicroAreas(microAreas)
-  }
+    // Compliant patients (have ALL compliance tags)
+    const compliant = eligible.filter(p =>
+      complianceTags.length > 0 && complianceTags.every(t => (p.tags || []).includes(t))
+    )
 
-  const filteredActions = searchTerm
-    ? urgentActions.filter(a => a.patientName.toLowerCase().includes(searchTerm.toLowerCase()))
-    : urgentActions
+    const pending = eligible.length - compliant.length
+    const percentage = eligible.length > 0 ? (compliant.length / eligible.length) * 100 : 0
+
+    return {
+      code,
+      name: INDICATOR_NAMES[code],
+      description: INDICATOR_DESCRIPTIONS[code],
+      totalEligible: eligible.length,
+      compliant: compliant.length,
+      pending,
+      percentage,
+    }
+  })
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -161,22 +89,25 @@ export default function DashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-            <p className="text-sm text-gray-500">Visao geral dos indicadores de qualidade</p>
+            <p className="text-sm text-gray-500">{filteredPatients.length} pacientes ativos</p>
           </div>
           <div className="flex items-center gap-3">
-            <input
-              type="text"
-              placeholder="Buscar paciente..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-48"
-            />
+            <select
+              value={filterTag}
+              onChange={(e) => setFilterTag(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+            >
+              <option value="all">Todas tags</option>
+              {usedTags.map(tag => (
+                <option key={tag} value={tag}>{tag}</option>
+              ))}
+            </select>
             <button
               onClick={loadData}
               disabled={loading}
               className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition"
             >
-              {loading ? 'Calculando...' : 'Recalcular'}
+              {loading ? 'Carregando...' : 'Atualizar'}
             </button>
           </div>
         </div>
@@ -186,8 +117,10 @@ export default function DashboardPage() {
             <MicroAreaFilter
               microAreas={microAreas}
               selected={selectedMicroAreas}
-              onToggle={handleToggleMicroArea}
-              onSelectAll={handleSelectAllMicroAreas}
+              onToggle={(area) => setSelectedMicroAreas(prev =>
+                prev.includes(area) ? prev.filter(a => a !== area) : [...prev, area]
+              )}
+              onSelectAll={() => setSelectedMicroAreas(microAreas)}
             />
           </div>
         )}
@@ -198,13 +131,68 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
+            {/* Indicator Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-              {summaries.map(s => (
-                <IndicatorCard key={s.code} summary={s} />
-              ))}
+              {indicatorSummaries.map(s => {
+                const color = s.percentage >= 75 ? 'green' : s.percentage >= 50 ? 'yellow' : s.totalEligible === 0 ? 'gray' : 'red'
+                const bgMap: Record<string, string> = { green: 'bg-green-50 border-green-200', yellow: 'bg-yellow-50 border-yellow-200', red: 'bg-red-50 border-red-200', gray: 'bg-gray-50 border-gray-200' }
+                const textMap: Record<string, string> = { green: 'text-green-700', yellow: 'text-yellow-700', red: 'text-red-700', gray: 'text-gray-500' }
+                const barMap: Record<string, string> = { green: 'bg-green-500', yellow: 'bg-yellow-500', red: 'bg-red-500', gray: 'bg-gray-300' }
+
+                return (
+                  <Link
+                    key={s.code}
+                    href={`/indicators/${s.code}`}
+                    className={`rounded-xl border p-4 hover:shadow-md transition ${bgMap[color]}`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-gray-500">{s.code}</span>
+                      <span className={`text-lg font-bold ${textMap[color]}`}>
+                        {s.totalEligible > 0 ? `${s.percentage.toFixed(0)}%` : '-'}
+                      </span>
+                    </div>
+                    <p className="text-sm font-semibold text-gray-900 mb-1">{s.name}</p>
+                    <p className="text-xs text-gray-500 mb-3">{s.description}</p>
+
+                    {/* Progress bar */}
+                    <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                      <div className={`h-2 rounded-full ${barMap[color]}`} style={{ width: `${s.percentage}%` }} />
+                    </div>
+
+                    <div className="flex justify-between text-xs">
+                      <span className="text-green-600 font-medium">{s.compliant} em dia</span>
+                      <span className="text-red-600 font-medium">{s.pending} pendentes</span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">{s.totalEligible} elegiveis</p>
+                  </Link>
+                )
+              })}
             </div>
 
-            <UrgentActions actions={filteredActions} />
+            {/* Summary of all tags used */}
+            {usedTags.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <h2 className="text-sm font-semibold text-gray-900 mb-3">Tags em uso</h2>
+                <div className="flex flex-wrap gap-2">
+                  {usedTags.map(tag => {
+                    const count = filteredPatients.filter(p => (p.tags || []).includes(tag)).length
+                    return (
+                      <button
+                        key={tag}
+                        onClick={() => setFilterTag(filterTag === tag ? 'all' : tag)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium transition cursor-pointer ${
+                          filterTag === tag
+                            ? getTagColor(tag) + ' ring-2 ring-offset-1 ring-blue-400'
+                            : getTagColor(tag)
+                        }`}
+                      >
+                        {tag} ({count})
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </>
         )}
       </main>

@@ -6,23 +6,15 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
-import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination, Pregnancy } from '@/types/database'
-import type { IndicatorResult } from '@/types/indicator'
+import type { Patient } from '@/types/database'
 import { INDICATOR_NAMES } from '@/types/indicator'
-import { calculateAllIndicators, getApplicableIndicators } from '@/lib/indicators/engine'
-import type { PatientData } from '@/lib/indicators/engine'
-import { classificationBg, classificationLabel } from '@/lib/utils/scoring'
+import { INDICATOR_TAGS, INDICATOR_COMPLIANCE_TAGS, getTagColor } from '@/lib/tags'
 import { ageInYears } from '@/lib/utils/dates'
-
-interface PatientRow {
-  patient: Patient
-  result: IndicatorResult
-}
 
 export default function IndicatorDetailPage() {
   const params = useParams()
   const indicator = (params.indicator as string).toUpperCase()
-  const [rows, setRows] = useState<PatientRow[]>([])
+  const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [microAreas, setMicroAreas] = useState<number[]>([])
   const [selectedMicroAreas, setSelectedMicroAreas] = useState<number[]>([])
@@ -31,82 +23,64 @@ export default function IndicatorDetailPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
 
-    const { data: patients } = await supabase
+    const { data } = await supabase
       .from('patients')
       .select('*')
       .eq('status', 'active')
 
-    if (!patients || patients.length === 0) {
-      setRows([])
+    if (!data || data.length === 0) {
+      setPatients([])
       setLoading(false)
       return
     }
 
-    const areas = [...new Set(patients.map(p => p.micro_area).filter(Boolean) as number[])].sort()
+    const areas = [...new Set(data.map((p: Patient) => p.micro_area).filter(Boolean) as number[])].sort()
     setMicroAreas(areas)
     if (selectedMicroAreas.length === 0) setSelectedMicroAreas(areas)
 
-    const filteredPatients = patients.filter(p =>
-      selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area)
-    )
-    const patientIds = filteredPatients.map(p => p.id)
-
-    const [conditions, consultations, measurements, procedures, homeVisits, vaccinations, pregnancies] = await Promise.all([
-      supabase.from('conditions').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('consultations').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('measurements').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('procedures').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('home_visits').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('vaccinations').select('*').in('patient_id', patientIds).then(r => r.data || []),
-      supabase.from('pregnancies').select('*').in('patient_id', patientIds).then(r => r.data || []),
-    ])
-
-    const patientRows: PatientRow[] = []
-
-    for (const patient of filteredPatients) {
-      const patientData: PatientData = {
-        patient: patient as Patient,
-        conditions: (conditions as Condition[]).filter(c => c.patient_id === patient.id),
-        consultations: (consultations as Consultation[]).filter(c => c.patient_id === patient.id),
-        measurements: (measurements as Measurement[]).filter(m => m.patient_id === patient.id),
-        procedures: (procedures as Procedure[]).filter(p => p.patient_id === patient.id),
-        homeVisits: (homeVisits as HomeVisit[]).filter(v => v.patient_id === patient.id),
-        vaccinations: (vaccinations as Vaccination[]).filter(v => v.patient_id === patient.id),
-        pregnancies: (pregnancies as Pregnancy[]).filter(p => p.patient_id === patient.id),
-      }
-
-      const applicable = getApplicableIndicators(patientData)
-      if (!applicable.includes(indicator)) continue
-
-      const results = calculateAllIndicators(patientData)
-      const result = results.find(r => r.indicator === indicator)
-      if (result) {
-        patientRows.push({ patient: patient as Patient, result })
-      }
-    }
-
-    // Sort by score ascending (most urgent first)
-    patientRows.sort((a, b) => a.result.percentage - b.result.percentage)
-    setRows(patientRows)
+    setPatients(data as Patient[])
     setLoading(false)
-  }, [supabase, indicator, selectedMicroAreas])
+  }, [supabase, selectedMicroAreas])
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
+  const eligibilityTags = INDICATOR_TAGS[indicator] || []
+  const complianceTags = INDICATOR_COMPLIANCE_TAGS[indicator] || []
+
+  // Filter by microarea then find eligible patients
+  const filteredPatients = patients.filter(p =>
+    selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area!)
+  )
+
+  const eligible = filteredPatients.filter(p =>
+    eligibilityTags.some(t => (p.tags || []).includes(t))
+  )
+
+  // Sort: pending first, then compliant
+  const sorted = [...eligible].sort((a, b) => {
+    const aCompliant = complianceTags.length > 0 && complianceTags.every(t => (a.tags || []).includes(t))
+    const bCompliant = complianceTags.length > 0 && complianceTags.every(t => (b.tags || []).includes(t))
+    if (aCompliant && !bCompliant) return 1
+    if (!aCompliant && bCompliant) return -1
+    return a.name.localeCompare(b.name)
+  })
+
   function exportCSV() {
-    if (rows.length === 0) return
-    const headers = ['Nome', 'Idade', 'Microarea', 'Score', 'Classificacao',
-      ...rows[0].result.practices.map(p => p.code + ' - ' + p.name)]
-    const csvRows = rows.map(r => [
-      r.patient.name,
-      ageInYears(r.patient.date_of_birth),
-      r.patient.micro_area || '-',
-      r.result.percentage.toFixed(1),
-      classificationLabel(r.result.classification),
-      ...r.result.practices.map(p => p.achieved ? 'Cumprida' : p.exempt ? 'Isento' : 'Pendente'),
-    ])
+    if (sorted.length === 0) return
+    const headers = ['Nome', 'Idade', 'Sexo', 'Microarea', 'Status', 'Tags']
+    const csvRows = sorted.map(p => {
+      const isCompliant = complianceTags.length > 0 && complianceTags.every(t => (p.tags || []).includes(t))
+      return [
+        p.name,
+        ageInYears(p.date_of_birth),
+        p.sex,
+        p.micro_area || '-',
+        isCompliant ? 'Em dia' : 'Pendente',
+        (p.tags || []).join(', '),
+      ]
+    })
     const csv = [headers, ...csvRows].map(row => row.join(';')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -129,7 +103,7 @@ export default function IndicatorDetailPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{indicator} - {INDICATOR_NAMES[indicator]}</h1>
-            <p className="text-sm text-gray-500">{rows.length} pacientes elegiveis</p>
+            <p className="text-sm text-gray-500">{eligible.length} pacientes elegiveis</p>
           </div>
           <button
             onClick={exportCSV}
@@ -137,6 +111,28 @@ export default function IndicatorDetailPage() {
           >
             Exportar CSV
           </button>
+        </div>
+
+        {/* Tag info */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
+          <div className="flex flex-wrap gap-4">
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Elegivel se tem:</p>
+              <div className="flex flex-wrap gap-1">
+                {eligibilityTags.map(tag => (
+                  <span key={tag} className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)}`}>{tag}</span>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Em dia se tem:</p>
+              <div className="flex flex-wrap gap-1">
+                {complianceTags.map(tag => (
+                  <span key={tag} className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)}`}>{tag}</span>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
 
         {microAreas.length > 0 && (
@@ -154,10 +150,10 @@ export default function IndicatorDetailPage() {
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
           </div>
-        ) : rows.length === 0 ? (
+        ) : sorted.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
             <p className="text-gray-500">Nenhum paciente elegivel para este indicador.</p>
-            <p className="text-sm text-gray-400 mt-1">Importe dados CSV para comecar.</p>
+            <p className="text-sm text-gray-400 mt-1">Adicione tags aos pacientes para categoriza-los.</p>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -168,38 +164,46 @@ export default function IndicatorDetailPage() {
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Paciente</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Idade</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">MA</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Score</th>
-                    {rows[0]?.result.practices.map(p => (
-                      <th key={p.code} className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider px-2 py-3" title={p.name}>
-                        {p.code}
-                      </th>
-                    ))}
+                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
+                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Tags</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {rows.map(({ patient, result }) => (
-                    <tr key={patient.id} className="hover:bg-gray-50 transition">
-                      <td className="px-4 py-3">
-                        <Link href={`/patients/${patient.id}`} className="text-sm font-medium text-blue-600 hover:underline">
-                          {patient.name}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(patient.date_of_birth)}a</td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{patient.micro_area || '-'}</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${classificationBg(result.classification)}`}>
-                          {result.percentage.toFixed(0)}%
-                        </span>
-                      </td>
-                      {result.practices.map(p => (
-                        <td key={p.code} className="px-2 py-3 text-center" title={p.details}>
-                          <span className="text-sm">
-                            {p.exempt ? '⬜' : p.achieved ? '✅' : p.daysRemaining !== null && p.daysRemaining >= 0 && p.daysRemaining <= 30 ? '⏰' : '❌'}
+                  {sorted.map(patient => {
+                    const isCompliant = complianceTags.length > 0 && complianceTags.every(t => (patient.tags || []).includes(t))
+                    return (
+                      <tr key={patient.id} className="hover:bg-gray-50 transition">
+                        <td className="px-4 py-3">
+                          <Link href={`/patients/${patient.id}`} className="text-sm font-medium text-blue-600 hover:underline">
+                            {patient.name}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(patient.date_of_birth)}a</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{patient.micro_area || '-'}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            isCompliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                          }`}>
+                            {isCompliant ? 'Em dia' : 'Pendente'}
                           </span>
                         </td>
-                      ))}
-                    </tr>
-                  ))}
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {(patient.tags || []).slice(0, 4).map(tag => (
+                              <span key={tag} className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)}`}>
+                                {tag}
+                              </span>
+                            ))}
+                            {(patient.tags || []).length > 4 && (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                                +{(patient.tags || []).length - 4}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

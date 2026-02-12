@@ -4,17 +4,21 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
+import TagSelector from '@/components/ui/TagSelector'
 import type { Patient } from '@/types/database'
 import { ageInYears } from '@/lib/utils/dates'
+import { getTagColor, ALL_TAGS } from '@/lib/tags'
 
 export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterMA, setFilterMA] = useState<string>('all')
+  const [filterTag, setFilterTag] = useState<string>('all')
   const [showForm, setShowForm] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [formTags, setFormTags] = useState<string[]>([])
   const [form, setForm] = useState({
     name: '',
     date_of_birth: '',
@@ -42,10 +46,14 @@ export default function PatientsPage() {
 
   const microAreas = [...new Set(patients.map(p => p.micro_area).filter(Boolean) as number[])].sort()
 
+  // Collect all tags used by patients for the filter dropdown
+  const usedTags = [...new Set(patients.flatMap(p => p.tags || []))].sort()
+
   const filtered = patients.filter(p => {
     const matchesSearch = search === '' || p.name.toLowerCase().includes(search.toLowerCase()) || p.cpf?.includes(search)
     const matchesMA = filterMA === 'all' || p.micro_area === Number(filterMA)
-    return matchesSearch && matchesMA
+    const matchesTag = filterTag === 'all' || (p.tags || []).includes(filterTag)
+    return matchesSearch && matchesMA && matchesTag
   })
 
   async function handleAddPatient(e: React.FormEvent) {
@@ -61,6 +69,7 @@ export default function PatientsPage() {
       cns: form.cns.trim() || null,
       micro_area: form.micro_area ? Number(form.micro_area) : null,
       team_type: Number(form.team_type),
+      tags: formTags,
       status: 'active',
     })
 
@@ -71,6 +80,7 @@ export default function PatientsPage() {
     }
 
     setForm({ name: '', date_of_birth: '', sex: 'M', cpf: '', cns: '', micro_area: '', team_type: '70' })
+    setFormTags([])
     setShowForm(false)
     setSaving(false)
     await loadPatients()
@@ -96,81 +106,93 @@ export default function PatientsPage() {
         {showForm && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Novo Paciente</h2>
-            <form onSubmit={handleAddPatient} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
-                <input
-                  type="text"
-                  required
-                  value={form.name}
-                  onChange={e => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Nome completo"
-                />
+            <form onSubmit={handleAddPatient}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
+                  <input
+                    type="text"
+                    required
+                    value={form.name}
+                    onChange={e => setForm({ ...form, name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="Nome completo"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento *</label>
+                  <input
+                    type="date"
+                    required
+                    value={form.date_of_birth}
+                    onChange={e => setForm({ ...form, date_of_birth: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Sexo *</label>
+                  <select
+                    value={form.sex}
+                    onChange={e => setForm({ ...form, sex: e.target.value as 'M' | 'F' })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  >
+                    <option value="M">Masculino</option>
+                    <option value="F">Feminino</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">CPF</label>
+                  <input
+                    type="text"
+                    value={form.cpf}
+                    onChange={e => setForm({ ...form, cpf: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="000.000.000-00"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">CNS</label>
+                  <input
+                    type="text"
+                    value={form.cns}
+                    onChange={e => setForm({ ...form, cns: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="Cartao Nacional de Saude"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Microarea</label>
+                  <input
+                    type="number"
+                    value={form.micro_area}
+                    onChange={e => setForm({ ...form, micro_area: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    placeholder="Ex: 1"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Equipe</label>
+                  <select
+                    value={form.team_type}
+                    onChange={e => setForm({ ...form, team_type: e.target.value as '70' | '76' })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  >
+                    <option value="70">eSF (70)</option>
+                    <option value="76">eAP (76)</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento *</label>
-                <input
-                  type="date"
-                  required
-                  value={form.date_of_birth}
-                  onChange={e => setForm({ ...form, date_of_birth: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                />
+
+              {/* Tags Section */}
+              <div className="border-t border-gray-200 pt-4 mb-4">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">
+                  Tags do Paciente
+                  {formTags.length > 0 && <span className="ml-2 text-blue-600 font-normal">({formTags.length} selecionadas)</span>}
+                </h3>
+                <TagSelector selected={formTags} onChange={setFormTags} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Sexo *</label>
-                <select
-                  value={form.sex}
-                  onChange={e => setForm({ ...form, sex: e.target.value as 'M' | 'F' })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                >
-                  <option value="M">Masculino</option>
-                  <option value="F">Feminino</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">CPF</label>
-                <input
-                  type="text"
-                  value={form.cpf}
-                  onChange={e => setForm({ ...form, cpf: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="000.000.000-00"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">CNS</label>
-                <input
-                  type="text"
-                  value={form.cns}
-                  onChange={e => setForm({ ...form, cns: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Cartao Nacional de Saude"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Microarea</label>
-                <input
-                  type="number"
-                  value={form.micro_area}
-                  onChange={e => setForm({ ...form, micro_area: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  placeholder="Ex: 1"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Equipe</label>
-                <select
-                  value={form.team_type}
-                  onChange={e => setForm({ ...form, team_type: e.target.value as '70' | '76' })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                >
-                  <option value="70">eSF (70)</option>
-                  <option value="76">eAP (76)</option>
-                </select>
-              </div>
-              <div className="sm:col-span-2 lg:col-span-2 flex items-end gap-3">
+
+              <div className="flex items-center gap-3">
                 <button
                   type="submit"
                   disabled={saving}
@@ -184,13 +206,13 @@ export default function PatientsPage() {
           </div>
         )}
 
-        <div className="flex gap-3 mb-6">
+        <div className="flex flex-wrap gap-3 mb-6">
           <input
             type="text"
             placeholder="Buscar por nome ou CPF..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+            className="flex-1 min-w-[200px] px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
           />
           <select
             value={filterMA}
@@ -200,6 +222,16 @@ export default function PatientsPage() {
             <option value="all">Todas microareas</option>
             {microAreas.map(ma => (
               <option key={ma} value={ma}>Microarea {ma}</option>
+            ))}
+          </select>
+          <select
+            value={filterTag}
+            onChange={(e) => setFilterTag(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+          >
+            <option value="all">Todas tags</option>
+            {usedTags.map(tag => (
+              <option key={tag} value={tag}>{tag}</option>
             ))}
           </select>
         </div>
@@ -222,9 +254,8 @@ export default function PatientsPage() {
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Nome</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Idade</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Sexo</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">CPF</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Microarea</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Equipe</th>
+                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">MA</th>
+                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Tags</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -237,9 +268,21 @@ export default function PatientsPage() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(p.date_of_birth)}a</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{p.sex}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600 font-mono">{p.cpf || '-'}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{p.micro_area || '-'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{p.team_type === 70 ? 'eSF' : 'eAP'}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {(p.tags || []).slice(0, 5).map(tag => (
+                            <span key={tag} className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)}`}>
+                              {tag}
+                            </span>
+                          ))}
+                          {(p.tags || []).length > 5 && (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                              +{(p.tags || []).length - 5}
+                            </span>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

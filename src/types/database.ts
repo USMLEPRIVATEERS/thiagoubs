@@ -8,6 +8,7 @@ export interface Patient {
   cns?: string
   micro_area?: number
   team_type: 70 | 76
+  tags?: string[]
   status: 'active' | 'moved' | 'deceased'
   created_at: string
   updated_at: string

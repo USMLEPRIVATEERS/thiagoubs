@@ -5,13 +5,10 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
-import GoodPracticeChecklist from '@/components/patients/GoodPracticeChecklist'
-import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination, Pregnancy } from '@/types/database'
-import type { IndicatorResult } from '@/types/indicator'
+import TagSelector from '@/components/ui/TagSelector'
+import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination } from '@/types/database'
+import { getTagColor, getIndicatorsForTags, isCompliantForIndicator } from '@/lib/tags'
 import { INDICATOR_NAMES } from '@/types/indicator'
-import { calculateAllIndicators, getApplicableIndicators } from '@/lib/indicators/engine'
-import type { PatientData } from '@/lib/indicators/engine'
-import { classificationBg, classificationLabel } from '@/lib/utils/scoring'
 import { formatDate, ageInYears } from '@/lib/utils/dates'
 
 export default function PatientDetailPage() {
@@ -24,11 +21,12 @@ export default function PatientDetailPage() {
   const [procedures, setProcedures] = useState<Procedure[]>([])
   const [homeVisits, setHomeVisits] = useState<HomeVisit[]>([])
   const [vaccinations, setVaccinations] = useState<Vaccination[]>([])
-  const [pregnancies, setPregnancies] = useState<Pregnancy[]>([])
-  const [indicators, setIndicators] = useState<IndicatorResult[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<Partial<Patient>>({})
+  const [editTags, setEditTags] = useState<string[]>([])
+  const [showTagEditor, setShowTagEditor] = useState(false)
+  const [savingTags, setSavingTags] = useState(false)
   const supabase = createClient()
 
   const loadData = useCallback(async () => {
@@ -38,14 +36,13 @@ export default function PatientDetailPage() {
     if (!p) { setLoading(false); return }
     setPatient(p as Patient)
 
-    const [conds, consults, meas, procs, visits, vaccs, pregs] = await Promise.all([
+    const [conds, consults, meas, procs, visits, vaccs] = await Promise.all([
       supabase.from('conditions').select('*').eq('patient_id', patientId).then(r => r.data || []),
       supabase.from('consultations').select('*').eq('patient_id', patientId).order('consultation_date', { ascending: false }).then(r => r.data || []),
       supabase.from('measurements').select('*').eq('patient_id', patientId).order('measurement_date', { ascending: false }).then(r => r.data || []),
       supabase.from('procedures').select('*').eq('patient_id', patientId).order('procedure_date', { ascending: false }).then(r => r.data || []),
       supabase.from('home_visits').select('*').eq('patient_id', patientId).order('visit_date', { ascending: false }).then(r => r.data || []),
       supabase.from('vaccinations').select('*').eq('patient_id', patientId).order('dose_date', { ascending: false }).then(r => r.data || []),
-      supabase.from('pregnancies').select('*').eq('patient_id', patientId).then(r => r.data || []),
     ])
 
     setConditions(conds as Condition[])
@@ -54,21 +51,6 @@ export default function PatientDetailPage() {
     setProcedures(procs as Procedure[])
     setHomeVisits(visits as HomeVisit[])
     setVaccinations(vaccs as Vaccination[])
-    setPregnancies(pregs as Pregnancy[])
-
-    const patientData: PatientData = {
-      patient: p as Patient,
-      conditions: conds as Condition[],
-      consultations: consults as Consultation[],
-      measurements: meas as Measurement[],
-      procedures: procs as Procedure[],
-      homeVisits: visits as HomeVisit[],
-      vaccinations: vaccs as Vaccination[],
-      pregnancies: pregs as Pregnancy[],
-    }
-
-    const results = calculateAllIndicators(patientData)
-    setIndicators(results)
     setLoading(false)
   }, [supabase, patientId])
 
@@ -96,6 +78,21 @@ export default function PatientDetailPage() {
     }
   }
 
+  async function handleSaveTags() {
+    if (!patient) return
+    setSavingTags(true)
+    const { error } = await supabase
+      .from('patients')
+      .update({ tags: editTags })
+      .eq('id', patient.id)
+
+    if (!error) {
+      setPatient({ ...patient, tags: editTags })
+      setShowTagEditor(false)
+    }
+    setSavingTags(false)
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -117,6 +114,9 @@ export default function PatientDetailPage() {
       </div>
     )
   }
+
+  const patientTags = patient.tags || []
+  const eligibleIndicators = getIndicatorsForTags(patientTags)
 
   // Build timeline from all records
   const timeline = [
@@ -232,6 +232,80 @@ export default function PatientDetailPage() {
           )}
         </div>
 
+        {/* Tags Section */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-900">
+              Tags
+              <span className="ml-2 text-gray-500 font-normal">({patientTags.length})</span>
+            </h2>
+            <button
+              onClick={() => { setShowTagEditor(!showTagEditor); setEditTags(patientTags) }}
+              className="text-xs text-blue-600 hover:underline font-medium"
+            >
+              {showTagEditor ? 'Fechar' : 'Gerenciar Tags'}
+            </button>
+          </div>
+
+          {/* Current tags display */}
+          {patientTags.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {patientTags.map(tag => (
+                <span key={tag} className={`px-2.5 py-1 rounded-full text-xs font-medium ${getTagColor(tag)}`}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-400 mb-3">Nenhuma tag atribuida. Clique em &quot;Gerenciar Tags&quot; para adicionar.</p>
+          )}
+
+          {/* Eligible indicators based on tags */}
+          {eligibleIndicators.length > 0 && (
+            <div className="border-t border-gray-100 pt-3">
+              <p className="text-xs text-gray-500 mb-2">Indicadores elegiveis:</p>
+              <div className="flex flex-wrap gap-2">
+                {eligibleIndicators.map(code => {
+                  const compliant = isCompliantForIndicator(patientTags, code)
+                  return (
+                    <Link
+                      key={code}
+                      href={`/indicators/${code}`}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium ${
+                        compliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {code} - {INDICATOR_NAMES[code]} {compliant ? '(Em dia)' : '(Pendente)'}
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Tag editor */}
+          {showTagEditor && (
+            <div className="border-t border-gray-200 pt-4 mt-3">
+              <TagSelector selected={editTags} onChange={setEditTags} />
+              <div className="flex items-center gap-3 mt-4">
+                <button
+                  onClick={handleSaveTags}
+                  disabled={savingTags}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-sm font-medium rounded-lg transition"
+                >
+                  {savingTags ? 'Salvando...' : 'Salvar Tags'}
+                </button>
+                <button
+                  onClick={() => setShowTagEditor(false)}
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Conditions */}
         {conditions.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
@@ -245,23 +319,6 @@ export default function PatientDetailPage() {
             </div>
           </div>
         )}
-
-        {/* Indicators */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          {indicators.map(ind => (
-            <div key={ind.indicator}>
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${classificationBg(ind.classification)}`}>
-                  {ind.percentage.toFixed(0)}% - {classificationLabel(ind.classification)}
-                </span>
-              </div>
-              <GoodPracticeChecklist
-                practices={ind.practices}
-                indicatorName={`${ind.indicator} - ${INDICATOR_NAMES[ind.indicator]}`}
-              />
-            </div>
-          ))}
-        </div>
 
         {/* Timeline */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
