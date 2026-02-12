@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import { parseCSV, parsePastedText, type ParsedCSV } from '@/lib/csv/parser'
-import { autoMapColumns, parseDate, PATIENT_FIELDS, type ColumnMapping } from '@/lib/csv/mapper'
+import { autoMapColumns, parseDate, detectCpfOrCns, PATIENT_FIELDS, type ColumnMapping } from '@/lib/csv/mapper'
 
 type Step = 'input' | 'map' | 'importing' | 'done'
 
@@ -80,6 +80,13 @@ export default function ImportPage() {
           status: 'active',
           tags: [],
         }
+        // Auto-detect CPF vs CNS from combined column
+        if (mapping.cpf_or_cns && row[mapping.cpf_or_cns]) {
+          const detected = detectCpfOrCns(row[mapping.cpf_or_cns])
+          if (detected.type === 'cpf') patient.cpf = detected.cleaned
+          else if (detected.type === 'cns') patient.cns = detected.cleaned
+        }
+        // Separate CPF/CNS columns override auto-detection
         if (mapping.cpf && row[mapping.cpf]) patient.cpf = row[mapping.cpf].replace(/\D/g, '')
         if (mapping.cns && row[mapping.cns]) patient.cns = row[mapping.cns].trim()
         if (mapping.micro_area && row[mapping.micro_area]) patient.micro_area = Number(row[mapping.micro_area])

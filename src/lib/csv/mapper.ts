@@ -6,8 +6,9 @@ export const PATIENT_FIELDS = [
   { key: 'name', label: 'Nome', required: true },
   { key: 'date_of_birth', label: 'Data de Nascimento', required: true },
   { key: 'sex', label: 'Sexo (M/F)', required: false },
-  { key: 'cpf', label: 'CPF', required: false },
-  { key: 'cns', label: 'CNS', required: false },
+  { key: 'cpf_or_cns', label: 'CPF ou CNS (auto-detecta)', required: false },
+  { key: 'cpf', label: 'CPF (coluna separada)', required: false },
+  { key: 'cns', label: 'CNS (coluna separada)', required: false },
   { key: 'micro_area', label: 'Microarea', required: false },
   { key: 'team_type', label: 'Tipo de Equipe (70/76)', required: false },
 ]
@@ -74,7 +75,8 @@ export function autoMapColumns(csvHeaders: string[], systemFields: { key: string
     name: ['nome', 'nome_paciente', 'nome do paciente', 'paciente', 'nm_paciente'],
     date_of_birth: ['data_nascimento', 'dn', 'dt_nascimento', 'data de nascimento', 'nascimento'],
     sex: ['sexo', 'genero', 'sx'],
-    cpf: ['cpf', 'cpf_paciente', 'nr_cpf', 'documento'],
+    cpf_or_cns: ['cpf/cns', 'cpf_ou_cns', 'cpf_cns', 'documento', 'nr_documento'],
+    cpf: ['cpf', 'cpf_paciente', 'nr_cpf'],
     cns: ['cns', 'cartao_sus', 'nr_cns'],
     micro_area: ['micro_area', 'microarea', 'ma', 'area'],
     team_type: ['tipo_equipe', 'equipe', 'tp_equipe'],
@@ -117,6 +119,24 @@ export function autoMapColumns(csvHeaders: string[], systemFields: { key: string
   }
 
   return mapping
+}
+
+// Auto-detect whether a value is CPF or CNS
+// CPF: 11 digits (possibly formatted as XXX.XXX.XXX-XX)
+// CNS: 15 digits
+export function detectCpfOrCns(value: string): { type: 'cpf' | 'cns' | null; cleaned: string } {
+  if (!value) return { type: null, cleaned: '' }
+  const digits = value.replace(/\D/g, '')
+  if (digits.length === 11) return { type: 'cpf', cleaned: digits }
+  if (digits.length === 15) return { type: 'cns', cleaned: digits }
+  // If it has dots/dashes typical of CPF formatting, try CPF
+  if (/^\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}$/.test(value.trim())) {
+    return { type: 'cpf', cleaned: digits }
+  }
+  // Default: if <= 11 digits treat as partial CPF, if > 11 treat as CNS
+  if (digits.length > 0 && digits.length <= 11) return { type: 'cpf', cleaned: digits }
+  if (digits.length > 11) return { type: 'cns', cleaned: digits }
+  return { type: null, cleaned: '' }
 }
 
 export function parseDate(value: string): string | null {
