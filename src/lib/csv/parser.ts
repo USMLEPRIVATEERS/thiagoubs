@@ -24,3 +24,31 @@ export function parseCSV(file: File): Promise<ParsedCSV> {
     })
   })
 }
+
+export function parsePastedText(text: string): ParsedCSV {
+  const lines = text.split('\n').filter(l => l.trim() !== '')
+  if (lines.length === 0) {
+    return { headers: [], rows: [], errors: ['Texto vazio'] }
+  }
+
+  // Detect delimiter: tab or semicolon
+  const firstLine = lines[0]
+  const tabCount = (firstLine.match(/\t/g) || []).length
+  const semiCount = (firstLine.match(/;/g) || []).length
+  const delimiter = tabCount >= semiCount ? '\t' : ';'
+
+  const headers = lines[0].split(delimiter).map(h => h.trim())
+  const rows: Record<string, string>[] = []
+  const errors: string[] = []
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(delimiter).map(c => c.trim())
+    const row: Record<string, string> = {}
+    for (let j = 0; j < headers.length; j++) {
+      row[headers[j]] = cols[j] || ''
+    }
+    rows.push(row)
+  }
+
+  return { headers, rows, errors }
+}
