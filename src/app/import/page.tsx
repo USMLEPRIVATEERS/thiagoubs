@@ -116,57 +116,78 @@ export default function ImportPage() {
       setProgress({ current: Math.min(i + 500, cpfsInImport.length), total: cpfsInImport.length, phase: 'Verificando duplicados...' })
     }
 
-    // Phase 3: Batch upsert patients WITH CPF (200 per batch)
-    const BATCH_SIZE = 200
+    // Separate new vs existing patients
+    const newPatients: typeof withCpf = []
+    const existingPatients: typeof withCpf = []
+    for (const item of withCpf) {
+      const cpf = item.patient.cpf as string
+      if (existingCpfs.has(cpf)) {
+        // For existing patients, don't overwrite tags
+        const { tags: _tags, ...withoutTags } = item.patient
+        void _tags
+        existingPatients.push({ patient: withoutTags, lineNum: item.lineNum })
+      } else {
+        newPatients.push(item)
+      }
+    }
+
+    // Phase 3: Save in batches of 50 (safe for Supabase limits)
+    const BATCH_SIZE = 50
     let processed = 0
     const totalToSave = withCpf.length + withoutCpf.length
 
-    for (let i = 0; i < withCpf.length; i += BATCH_SIZE) {
-      const batch = withCpf.slice(i, i + BATCH_SIZE)
+    // 3a: Upsert existing patients (without tags field)
+    for (let i = 0; i < existingPatients.length; i += BATCH_SIZE) {
+      const batch = existingPatients.slice(i, i + BATCH_SIZE)
       const patients = batch.map(b => b.patient)
-
-      setProgress({ current: processed, total: totalToSave, phase: `Salvando pacientes (${processed}/${totalToSave})...` })
+      setProgress({ current: processed, total: totalToSave, phase: `Atualizando existentes (${processed}/${totalToSave})...` })
 
       const { error } = await supabase.from('patients').upsert(patients, { onConflict: 'cpf' })
       if (error) {
-        // If batch fails, try individually to identify the problematic rows
         for (const item of batch) {
           const { error: singleErr } = await supabase.from('patients').upsert(item.patient, { onConflict: 'cpf' })
-          if (singleErr) {
-            errors.push(`Linha ${item.lineNum}: ${singleErr.message}`)
-          } else {
-            const cpf = item.patient.cpf as string
-            if (existingCpfs.has(cpf)) updated++
-            else success++
-          }
+          if (singleErr) errors.push(`Linha ${item.lineNum}: ${singleErr.message}`)
+          else updated++
           processed++
         }
       } else {
-        for (const item of batch) {
-          const cpf = item.patient.cpf as string
-          if (existingCpfs.has(cpf)) updated++
-          else success++
-        }
+        updated += batch.length
         processed += batch.length
       }
     }
 
-    // Phase 4: Batch insert patients WITHOUT CPF (200 per batch)
+    // 3b: Insert new patients with CPF
+    for (let i = 0; i < newPatients.length; i += BATCH_SIZE) {
+      const batch = newPatients.slice(i, i + BATCH_SIZE)
+      const patients = batch.map(b => b.patient)
+      setProgress({ current: processed, total: totalToSave, phase: `Adicionando novos (${processed}/${totalToSave})...` })
+
+      const { error } = await supabase.from('patients').upsert(patients, { onConflict: 'cpf' })
+      if (error) {
+        for (const item of batch) {
+          const { error: singleErr } = await supabase.from('patients').upsert(item.patient, { onConflict: 'cpf' })
+          if (singleErr) errors.push(`Linha ${item.lineNum}: ${singleErr.message}`)
+          else success++
+          processed++
+        }
+      } else {
+        success += batch.length
+        processed += batch.length
+      }
+    }
+
+    // 3c: Insert patients WITHOUT CPF
     for (let i = 0; i < withoutCpf.length; i += BATCH_SIZE) {
       const batch = withoutCpf.slice(i, i + BATCH_SIZE)
       const patients = batch.map(b => b.patient)
-
-      setProgress({ current: processed, total: totalToSave, phase: `Salvando pacientes (${processed}/${totalToSave})...` })
+      setProgress({ current: processed, total: totalToSave, phase: `Adicionando sem CPF (${processed}/${totalToSave})...` })
 
       const { error } = await supabase.from('patients').insert(patients)
       if (error) {
         for (const item of batch) {
           const { error: singleErr } = await supabase.from('patients').insert(item.patient)
-          if (singleErr) {
-            errors.push(`Linha ${item.lineNum}: ${singleErr.message}`)
-          } else {
-            success++
-          }
+          if (singleErr) errors.push(`Linha ${item.lineNum}: ${singleErr.message}`)
+          else success++
           processed++
         }
       } else {
