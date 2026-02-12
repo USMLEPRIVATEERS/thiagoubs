@@ -16,6 +16,7 @@ export default function ImportPage() {
   const [parsedData, setParsedData] = useState<ParsedCSV | null>(null)
   const [mapping, setMapping] = useState<ColumnMapping>({})
   const [importing, setImporting] = useState(false)
+  const [progress, setProgress] = useState({ current: 0, total: 0, phase: '' })
   const [result, setResult] = useState<{ success: number; updated: number; errors: string[] } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const supabase = useMemo(() => createClient(), [])
@@ -61,75 +62,116 @@ export default function ImportPage() {
     setStep('importing')
     setResult(null)
 
+    const totalRows = parsedData.rows.length
     const errors: string[] = []
     let success = 0
     let updated = 0
 
-    // Collect all CPFs to check for duplicates in one query
-    const cpfsToCheck: string[] = []
-    for (const row of parsedData.rows) {
-      let cpf = ''
+    // Phase 1: Parse all rows into patient objects
+    setProgress({ current: 0, total: totalRows, phase: 'Preparando dados...' })
+
+    const withCpf: { patient: Record<string, unknown>; lineNum: number }[] = []
+    const withoutCpf: { patient: Record<string, unknown>; lineNum: number }[] = []
+    const cpfsInImport: string[] = []
+
+    for (let i = 0; i < totalRows; i++) {
+      const row = parsedData.rows[i]
+      const name = row[mapping.name]?.trim()
+      const dob = parseDate(row[mapping.date_of_birth] || '')
+      if (!name) { errors.push(`Linha ${i + 2}: Nome vazio`); continue }
+      if (!dob) { errors.push(`Linha ${i + 2}: Data de nascimento invalida`); continue }
+
+      const patient: Record<string, unknown> = {
+        name,
+        date_of_birth: dob,
+        sex: row[mapping.sex]?.trim().toUpperCase() === 'F' ? 'F' : 'M',
+        team_type: Number(row[mapping.team_type]) === 76 ? 76 : 70,
+        status: 'active',
+        tags: [],
+      }
       if (mapping.cpf_or_cns && row[mapping.cpf_or_cns]) {
         const detected = detectCpfOrCns(row[mapping.cpf_or_cns])
-        if (detected.type === 'cpf') cpf = detected.cleaned
+        if (detected.type === 'cpf') patient.cpf = detected.cleaned
+        else if (detected.type === 'cns') patient.cns = detected.cleaned
       }
-      if (mapping.cpf && row[mapping.cpf]) cpf = row[mapping.cpf].replace(/\D/g, '')
-      if (cpf) cpfsToCheck.push(cpf)
+      if (mapping.cpf && row[mapping.cpf]) patient.cpf = row[mapping.cpf].replace(/\D/g, '')
+      if (mapping.cns && row[mapping.cns]) patient.cns = row[mapping.cns].trim()
+      if (mapping.micro_area && row[mapping.micro_area]) patient.micro_area = Number(row[mapping.micro_area])
+
+      if (patient.cpf) {
+        cpfsInImport.push(patient.cpf as string)
+        withCpf.push({ patient, lineNum: i + 2 })
+      } else {
+        withoutCpf.push({ patient, lineNum: i + 2 })
+      }
     }
 
-    // Fetch existing CPFs in batches of 500
+    // Phase 2: Check existing CPFs in batches
+    setProgress({ current: 0, total: cpfsInImport.length, phase: 'Verificando duplicados...' })
     const existingCpfs = new Set<string>()
-    for (let i = 0; i < cpfsToCheck.length; i += 500) {
-      const batch = cpfsToCheck.slice(i, i + 500)
-      const { data } = await supabase
-        .from('patients')
-        .select('cpf')
-        .in('cpf', batch)
+    for (let i = 0; i < cpfsInImport.length; i += 500) {
+      const batch = cpfsInImport.slice(i, i + 500)
+      const { data } = await supabase.from('patients').select('cpf').in('cpf', batch)
       if (data) data.forEach(p => { if (p.cpf) existingCpfs.add(p.cpf) })
+      setProgress({ current: Math.min(i + 500, cpfsInImport.length), total: cpfsInImport.length, phase: 'Verificando duplicados...' })
     }
 
-    for (let i = 0; i < parsedData.rows.length; i++) {
-      const row = parsedData.rows[i]
-      try {
-        const name = row[mapping.name]?.trim()
-        const dob = parseDate(row[mapping.date_of_birth] || '')
-        if (!name) { errors.push(`Linha ${i + 2}: Nome vazio`); continue }
-        if (!dob) { errors.push(`Linha ${i + 2}: Data de nascimento invalida`); continue }
+    // Phase 3: Batch upsert patients WITH CPF (200 per batch)
+    const BATCH_SIZE = 200
+    let processed = 0
+    const totalToSave = withCpf.length + withoutCpf.length
 
-        const patient: Record<string, unknown> = {
-          name,
-          date_of_birth: dob,
-          sex: row[mapping.sex]?.trim().toUpperCase() === 'F' ? 'F' : 'M',
-          team_type: Number(row[mapping.team_type]) === 76 ? 76 : 70,
-          status: 'active',
-          tags: [],
-        }
-        // Auto-detect CPF vs CNS from combined column
-        if (mapping.cpf_or_cns && row[mapping.cpf_or_cns]) {
-          const detected = detectCpfOrCns(row[mapping.cpf_or_cns])
-          if (detected.type === 'cpf') patient.cpf = detected.cleaned
-          else if (detected.type === 'cns') patient.cns = detected.cleaned
-        }
-        // Separate CPF/CNS columns override auto-detection
-        if (mapping.cpf && row[mapping.cpf]) patient.cpf = row[mapping.cpf].replace(/\D/g, '')
-        if (mapping.cns && row[mapping.cns]) patient.cns = row[mapping.cns].trim()
-        if (mapping.micro_area && row[mapping.micro_area]) patient.micro_area = Number(row[mapping.micro_area])
+    for (let i = 0; i < withCpf.length; i += BATCH_SIZE) {
+      const batch = withCpf.slice(i, i + BATCH_SIZE)
+      const patients = batch.map(b => b.patient)
 
-        const isDuplicate = typeof patient.cpf === 'string' && existingCpfs.has(patient.cpf)
+      setProgress({ current: processed, total: totalToSave, phase: `Salvando pacientes (${processed}/${totalToSave})...` })
 
-        if (patient.cpf) {
-          const { error } = await supabase
-            .from('patients')
-            .upsert(patient, { onConflict: 'cpf' })
-          if (error) { errors.push(`Linha ${i + 2}: ${error.message}`); continue }
-        } else {
-          const { error } = await supabase.from('patients').insert(patient)
-          if (error) { errors.push(`Linha ${i + 2}: ${error.message}`); continue }
+      const { error } = await supabase.from('patients').upsert(patients, { onConflict: 'cpf' })
+      if (error) {
+        // If batch fails, try individually to identify the problematic rows
+        for (const item of batch) {
+          const { error: singleErr } = await supabase.from('patients').upsert(item.patient, { onConflict: 'cpf' })
+          if (singleErr) {
+            errors.push(`Linha ${item.lineNum}: ${singleErr.message}`)
+          } else {
+            const cpf = item.patient.cpf as string
+            if (existingCpfs.has(cpf)) updated++
+            else success++
+          }
+          processed++
         }
-        if (isDuplicate) updated++
-        else success++
-      } catch {
-        errors.push(`Linha ${i + 2}: Erro inesperado`)
+      } else {
+        for (const item of batch) {
+          const cpf = item.patient.cpf as string
+          if (existingCpfs.has(cpf)) updated++
+          else success++
+        }
+        processed += batch.length
+      }
+    }
+
+    // Phase 4: Batch insert patients WITHOUT CPF (200 per batch)
+    for (let i = 0; i < withoutCpf.length; i += BATCH_SIZE) {
+      const batch = withoutCpf.slice(i, i + BATCH_SIZE)
+      const patients = batch.map(b => b.patient)
+
+      setProgress({ current: processed, total: totalToSave, phase: `Salvando pacientes (${processed}/${totalToSave})...` })
+
+      const { error } = await supabase.from('patients').insert(patients)
+      if (error) {
+        for (const item of batch) {
+          const { error: singleErr } = await supabase.from('patients').insert(item.patient)
+          if (singleErr) {
+            errors.push(`Linha ${item.lineNum}: ${singleErr.message}`)
+          } else {
+            success++
+          }
+          processed++
+        }
+      } else {
+        success += batch.length
+        processed += batch.length
       }
     }
 
@@ -361,11 +403,24 @@ export default function ImportPage() {
           </>
         )}
 
-        {/* Step 3: Importing */}
+        {/* Step 3: Importing with progress */}
         {step === 'importing' && (
           <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-4" />
-            <p className="text-sm text-gray-600">Importando pacientes...</p>
+            <p className="text-sm font-medium text-gray-900 mb-1">{progress.phase || 'Importando pacientes...'}</p>
+            {progress.total > 0 && (
+              <>
+                <div className="w-64 mx-auto bg-gray-200 rounded-full h-2.5 mt-3 mb-2">
+                  <div
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.round((progress.current / progress.total) * 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  {progress.current} / {progress.total} ({Math.round((progress.current / progress.total) * 100)}%)
+                </p>
+              </>
+            )}
           </div>
         )}
 
