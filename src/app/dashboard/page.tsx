@@ -6,15 +6,15 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
 import type { Patient } from '@/types/database'
-import { INDICATOR_NAMES, INDICATOR_DESCRIPTIONS } from '@/types/indicator'
-import { INDICATOR_TAGS, INDICATOR_COMPLIANCE_TAGS, getTagColor } from '@/lib/tags'
+import { INDICATOR_LIST, calculateScore, getTagColor, ELIGIBILITY_TAGS } from '@/lib/tags'
+import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
 
 export default function DashboardPage() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
   const [microAreas, setMicroAreas] = useState<number[]>([])
   const [selectedMicroAreas, setSelectedMicroAreas] = useState<number[]>([])
-  const [filterTag, setFilterTag] = useState<string>('all')
+  const [filterEligibility, setFilterEligibility] = useState<string>('all')
   const supabase = useMemo(() => createClient(), [])
   const initializedRef = useRef(false)
 
@@ -44,42 +44,50 @@ export default function DashboardPage() {
     loadData()
   }, [loadData])
 
-  // Filter patients by microarea and tag
+  // Filter patients by microarea
   const filteredPatients = patients.filter(p => {
     const matchesMA = selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area!)
-    const matchesTag = filterTag === 'all' || (p.tags || []).includes(filterTag)
-    return matchesMA && matchesTag
+    const matchesElig = filterEligibility === 'all' || (p.tags || []).includes(filterEligibility)
+    return matchesMA && matchesElig
   })
 
-  // Collect all used tags for the dropdown
-  const usedTags = [...new Set(patients.flatMap(p => p.tags || []))].sort()
+  // Used eligibility tags for dropdown
+  const usedEligibilityTags = ELIGIBILITY_TAGS.filter(t =>
+    patients.some(p => (p.tags || []).includes(t))
+  )
 
-  // Calculate tag-based indicator summaries
-  const indicatorSummaries = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'].map(code => {
-    const eligibilityTags = INDICATOR_TAGS[code] || []
-    const complianceTags = INDICATOR_COMPLIANCE_TAGS[code] || []
-
-    // Patients eligible for this indicator (have at least one eligibility tag)
+  // Calculate indicator summaries using proper scoring
+  const indicatorSummaries = INDICATOR_LIST.map(ind => {
+    // Eligible patients for this indicator
     const eligible = filteredPatients.filter(p =>
-      eligibilityTags.some(t => (p.tags || []).includes(t))
+      ind.eligibilityTags.some(t => (p.tags || []).includes(t))
     )
 
-    // Compliant patients (have ALL compliance tags)
-    const compliant = eligible.filter(p =>
-      complianceTags.length > 0 && complianceTags.every(t => (p.tags || []).includes(t))
-    )
+    // Calculate score for each eligible patient
+    const scores = eligible.map(p => calculateScore(p.tags || [], ind.code, p.team_type))
 
-    const pending = eligible.length - compliant.length
-    const percentage = eligible.length > 0 ? (compliant.length / eligible.length) * 100 : 0
+    // Average percentage across all eligible patients
+    const avgPct = scores.length > 0
+      ? scores.reduce((sum, s) => sum + s.percentage, 0) / scores.length
+      : 0
+
+    const classification = getClassification(avgPct, 100)
+
+    // Count by classification
+    const counts = { otimo: 0, bom: 0, suficiente: 0, regular: 0 }
+    for (const s of scores) {
+      const c = getClassification(s.percentage, 100)
+      counts[c]++
+    }
 
     return {
-      code,
-      name: INDICATOR_NAMES[code],
-      description: INDICATOR_DESCRIPTIONS[code],
+      code: ind.code,
+      name: ind.name,
+      description: ind.description,
       totalEligible: eligible.length,
-      compliant: compliant.length,
-      pending,
-      percentage,
+      avgPct,
+      classification,
+      counts,
     }
   })
 
@@ -95,12 +103,12 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-3">
             <select
-              value={filterTag}
-              onChange={(e) => setFilterTag(e.target.value)}
+              value={filterEligibility}
+              onChange={(e) => setFilterEligibility(e.target.value)}
               className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
             >
-              <option value="all">Todas tags</option>
-              {usedTags.map(tag => (
+              <option value="all">Todos pacientes</option>
+              {usedEligibilityTags.map(tag => (
                 <option key={tag} value={tag}>{tag}</option>
               ))}
             </select>
@@ -127,6 +135,15 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* C1 note */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+          <p className="text-xs text-amber-700">
+            <span className="font-semibold">C1 — Mais Acesso:</span> Indicador de equipe (ratio demanda programada / total).
+            Parametros: Otimo &gt;50-70%, Bom &gt;30-50%, Suficiente &gt;10-30%, Regular ≤10% ou &gt;70%.
+            Nao e calculado por paciente individual.
+          </p>
+        </div>
+
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
@@ -134,12 +151,12 @@ export default function DashboardPage() {
         ) : (
           <>
             {/* Indicator Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
               {indicatorSummaries.map(s => {
-                const color = s.percentage >= 75 ? 'green' : s.percentage >= 50 ? 'yellow' : s.totalEligible === 0 ? 'gray' : 'red'
-                const bgMap: Record<string, string> = { green: 'bg-green-50 border-green-200', yellow: 'bg-yellow-50 border-yellow-200', red: 'bg-red-50 border-red-200', gray: 'bg-gray-50 border-gray-200' }
-                const textMap: Record<string, string> = { green: 'text-green-700', yellow: 'text-yellow-700', red: 'text-red-700', gray: 'text-gray-500' }
-                const barMap: Record<string, string> = { green: 'bg-green-500', yellow: 'bg-yellow-500', red: 'bg-red-500', gray: 'bg-gray-300' }
+                const color = s.avgPct > 75 ? 'green' : s.avgPct > 50 ? 'blue' : s.avgPct > 25 ? 'orange' : s.totalEligible === 0 ? 'gray' : 'red'
+                const bgMap: Record<string, string> = { green: 'bg-green-50 border-green-200', blue: 'bg-blue-50 border-blue-200', orange: 'bg-orange-50 border-orange-200', red: 'bg-red-50 border-red-200', gray: 'bg-gray-50 border-gray-200' }
+                const textMap: Record<string, string> = { green: 'text-green-700', blue: 'text-blue-700', orange: 'text-orange-700', red: 'text-red-700', gray: 'text-gray-500' }
+                const barMap: Record<string, string> = { green: 'bg-green-500', blue: 'bg-blue-500', orange: 'bg-orange-500', red: 'bg-red-500', gray: 'bg-gray-300' }
 
                 return (
                   <Link
@@ -150,7 +167,7 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-bold text-gray-500">{s.code}</span>
                       <span className={`text-lg font-bold ${textMap[color]}`}>
-                        {s.totalEligible > 0 ? `${s.percentage.toFixed(0)}%` : '-'}
+                        {s.totalEligible > 0 ? `${s.avgPct.toFixed(0)}%` : '-'}
                       </span>
                     </div>
                     <p className="text-sm font-semibold text-gray-900 mb-1">{s.name}</p>
@@ -158,12 +175,15 @@ export default function DashboardPage() {
 
                     {/* Progress bar */}
                     <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                      <div className={`h-2 rounded-full ${barMap[color]}`} style={{ width: `${s.percentage}%` }} />
+                      <div className={`h-2 rounded-full ${barMap[color]}`} style={{ width: `${Math.min(s.avgPct, 100)}%` }} />
                     </div>
 
-                    <div className="flex justify-between text-xs">
-                      <span className="text-green-600 font-medium">{s.compliant} em dia</span>
-                      <span className="text-red-600 font-medium">{s.pending} pendentes</span>
+                    {/* Classification counts */}
+                    <div className="flex gap-2 text-xs mt-2">
+                      {s.counts.otimo > 0 && <span className="bg-green-100 text-green-700 px-1.5 rounded">Ot: {s.counts.otimo}</span>}
+                      {s.counts.bom > 0 && <span className="bg-blue-100 text-blue-700 px-1.5 rounded">Bom: {s.counts.bom}</span>}
+                      {s.counts.suficiente > 0 && <span className="bg-orange-100 text-orange-700 px-1.5 rounded">Suf: {s.counts.suficiente}</span>}
+                      {s.counts.regular > 0 && <span className="bg-red-100 text-red-700 px-1.5 rounded">Reg: {s.counts.regular}</span>}
                     </div>
                     <p className="text-xs text-gray-400 mt-1">{s.totalEligible} elegiveis</p>
                   </Link>
@@ -171,19 +191,19 @@ export default function DashboardPage() {
               })}
             </div>
 
-            {/* Summary of all tags used */}
-            {usedTags.length > 0 && (
+            {/* Eligibility summary */}
+            {usedEligibilityTags.length > 0 && (
               <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h2 className="text-sm font-semibold text-gray-900 mb-3">Tags em uso</h2>
+                <h2 className="text-sm font-semibold text-gray-900 mb-3">Elegibilidade</h2>
                 <div className="flex flex-wrap gap-2">
-                  {usedTags.map(tag => {
+                  {usedEligibilityTags.map(tag => {
                     const count = filteredPatients.filter(p => (p.tags || []).includes(tag)).length
                     return (
                       <button
                         key={tag}
-                        onClick={() => setFilterTag(filterTag === tag ? 'all' : tag)}
+                        onClick={() => setFilterEligibility(filterEligibility === tag ? 'all' : tag)}
                         className={`px-3 py-1 rounded-full text-xs font-medium transition cursor-pointer ${
-                          filterTag === tag
+                          filterEligibility === tag
                             ? getTagColor(tag) + ' ring-2 ring-offset-1 ring-blue-400'
                             : getTagColor(tag)
                         }`}

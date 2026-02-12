@@ -7,8 +7,8 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import TagSelector from '@/components/ui/TagSelector'
 import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination } from '@/types/database'
-import { getTagColor, getIndicatorsForTags, isCompliantForIndicator } from '@/lib/tags'
-import { INDICATOR_NAMES } from '@/types/indicator'
+import { getTagColor, getTagLabel, getIndicatorsForTags, calculateScore, INDICATORS, ELIGIBILITY_TAGS } from '@/lib/tags'
+import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
 import { formatDate, ageInYears } from '@/lib/utils/dates'
 
 export default function PatientDetailPage() {
@@ -247,39 +247,55 @@ export default function PatientDetailPage() {
             </button>
           </div>
 
-          {/* Current tags display */}
-          {patientTags.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {patientTags.map(tag => (
-                <span key={tag} className={`px-2.5 py-1 rounded-full text-xs font-medium ${getTagColor(tag)}`}>
-                  {tag}
-                </span>
-              ))}
+          {/* Eligibility tags */}
+          {patientTags.filter(t => ELIGIBILITY_TAGS.includes(t)).length > 0 ? (
+            <div className="mb-3">
+              <p className="text-xs text-gray-500 mb-1">Elegibilidade:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {patientTags.filter(t => ELIGIBILITY_TAGS.includes(t)).map(tag => (
+                  <span key={tag} className={`px-2.5 py-1 rounded-full text-xs font-medium ${getTagColor(tag)}`}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="text-sm text-gray-400 mb-3">Nenhuma tag atribuida. Clique em &quot;Gerenciar Tags&quot; para adicionar.</p>
           )}
 
-          {/* Eligible indicators based on tags */}
+          {/* Indicator scores based on tags */}
           {eligibleIndicators.length > 0 && (
-            <div className="border-t border-gray-100 pt-3">
-              <p className="text-xs text-gray-500 mb-2">Indicadores elegiveis:</p>
-              <div className="flex flex-wrap gap-2">
-                {eligibleIndicators.map(code => {
-                  const compliant = isCompliantForIndicator(patientTags, code)
-                  return (
-                    <Link
-                      key={code}
-                      href={`/indicators/${code}`}
-                      className={`px-3 py-1 rounded-lg text-xs font-medium ${
-                        compliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      }`}
-                    >
-                      {code} - {INDICATOR_NAMES[code]} {compliant ? '(Em dia)' : '(Pendente)'}
-                    </Link>
-                  )
-                })}
-              </div>
+            <div className="border-t border-gray-100 pt-3 space-y-3">
+              <p className="text-xs text-gray-500">Indicadores:</p>
+              {eligibleIndicators.map(code => {
+                const ind = INDICATORS[code]
+                if (!ind) return null
+                const result = calculateScore(patientTags, code, patient.team_type)
+                const cls = getClassification(result.percentage, 100)
+                return (
+                  <div key={code} className="border border-gray-100 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <Link href={`/indicators/${code}`} className="text-xs font-bold text-blue-600 hover:underline">
+                        {code} — {ind.name}
+                      </Link>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${classificationBg(cls)}`}>
+                        {result.score}/{result.maxPossible} ({result.percentage.toFixed(0)}%) — {classificationLabel(cls)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                      {result.practices.map(p => (
+                        <div key={p.tag} className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded ${
+                          p.exempt ? 'text-gray-400' : p.achieved ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'
+                        }`}>
+                          <span>{p.exempt ? '—' : p.achieved ? '✓' : '✗'}</span>
+                          <span className="font-mono font-bold">{p.tag}</span>
+                          <span className="truncate">{p.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
 

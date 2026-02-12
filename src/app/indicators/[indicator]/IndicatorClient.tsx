@@ -7,8 +7,8 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
 import type { Patient } from '@/types/database'
-import { INDICATOR_NAMES } from '@/types/indicator'
-import { INDICATOR_TAGS, INDICATOR_COMPLIANCE_TAGS, getTagColor } from '@/lib/tags'
+import { INDICATORS, calculateScore, getTagColor } from '@/lib/tags'
+import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
 import { ageInYears } from '@/lib/utils/dates'
 
 export default function IndicatorDetailPage() {
@@ -50,41 +50,38 @@ export default function IndicatorDetailPage() {
     loadData()
   }, [loadData])
 
-  const eligibilityTags = INDICATOR_TAGS[indicator] || []
-  const complianceTags = INDICATOR_COMPLIANCE_TAGS[indicator] || []
+  const ind = INDICATORS[indicator]
 
   // Filter by microarea then find eligible patients
   const filteredPatients = patients.filter(p =>
     selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area!)
   )
 
-  const eligible = filteredPatients.filter(p =>
-    eligibilityTags.some(t => (p.tags || []).includes(t))
-  )
+  const eligible = ind
+    ? filteredPatients.filter(p => ind.eligibilityTags.some(t => (p.tags || []).includes(t)))
+    : []
 
-  // Sort: pending first, then compliant
-  const sorted = [...eligible].sort((a, b) => {
-    const aCompliant = complianceTags.length > 0 && complianceTags.every(t => (a.tags || []).includes(t))
-    const bCompliant = complianceTags.length > 0 && complianceTags.every(t => (b.tags || []).includes(t))
-    if (aCompliant && !bCompliant) return 1
-    if (!aCompliant && bCompliant) return -1
-    return a.name.localeCompare(b.name)
-  })
+  // Calculate scores and sort by score ascending (worst first)
+  const patientScores = eligible.map(p => ({
+    patient: p,
+    ...calculateScore(p.tags || [], indicator, p.team_type),
+  })).sort((a, b) => a.percentage - b.percentage)
 
   function exportCSV() {
-    if (sorted.length === 0) return
-    const headers = ['Nome', 'Idade', 'Sexo', 'Microarea', 'Status', 'Tags']
-    const csvRows = sorted.map(p => {
-      const isCompliant = complianceTags.length > 0 && complianceTags.every(t => (p.tags || []).includes(t))
-      return [
-        p.name,
-        ageInYears(p.date_of_birth),
-        p.sex,
-        p.micro_area || '-',
-        isCompliant ? 'Em dia' : 'Pendente',
-        (p.tags || []).join(', '),
-      ]
-    })
+    if (patientScores.length === 0 || !ind) return
+    const headers = ['Nome', 'Idade', 'Sexo', 'MA', 'Equipe', 'Pontos', 'Max', '%', 'Classificacao', ...ind.practices.map(p => p.tag)]
+    const csvRows = patientScores.map(ps => [
+      ps.patient.name,
+      ageInYears(ps.patient.date_of_birth),
+      ps.patient.sex,
+      ps.patient.micro_area || '-',
+      ps.patient.team_type,
+      ps.score,
+      ps.maxPossible,
+      ps.percentage.toFixed(0),
+      classificationLabel(getClassification(ps.percentage, 100)),
+      ...ps.practices.map(p => p.exempt ? 'ISENTO' : p.achieved ? 'SIM' : 'NAO'),
+    ])
     const csv = [headers, ...csvRows].map(row => row.join(';')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -106,7 +103,9 @@ export default function IndicatorDetailPage() {
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{indicator} - {INDICATOR_NAMES[indicator]}</h1>
+            <h1 className="text-2xl font-bold text-gray-900">
+              {indicator} — {ind?.name || 'Indicador'}
+            </h1>
             <p className="text-sm text-gray-500">{eligible.length} pacientes elegiveis</p>
           </div>
           <button
@@ -117,27 +116,22 @@ export default function IndicatorDetailPage() {
           </button>
         </div>
 
-        {/* Tag info */}
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
-          <div className="flex flex-wrap gap-4">
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Elegivel se tem:</p>
-              <div className="flex flex-wrap gap-1">
-                {eligibilityTags.map(tag => (
-                  <span key={tag} className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)}`}>{tag}</span>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Em dia se tem:</p>
-              <div className="flex flex-wrap gap-1">
-                {complianceTags.map(tag => (
-                  <span key={tag} className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)}`}>{tag}</span>
-                ))}
-              </div>
+        {/* Good practices legend */}
+        {ind && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
+            <h3 className="text-xs font-semibold text-gray-900 mb-2">Boas Praticas</h3>
+            <div className="space-y-1">
+              {ind.practices.map(p => (
+                <div key={p.tag} className="flex items-center gap-2 text-xs">
+                  <span className={`px-2 py-0.5 rounded font-mono font-bold ${getTagColor(p.tag)}`}>{p.tag}</span>
+                  <span className="text-gray-700">{p.label}</span>
+                  <span className="text-gray-400 ml-auto">{p.points} pts</span>
+                  {p.exemptEAP76 && <span className="text-amber-600 text-xs">(isento eAP 76)</span>}
+                </div>
+              ))}
             </div>
           </div>
-        </div>
+        )}
 
         {microAreas.length > 0 && (
           <div className="mb-6">
@@ -154,10 +148,21 @@ export default function IndicatorDetailPage() {
           <div className="flex items-center justify-center py-20">
             <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
           </div>
-        ) : sorted.length === 0 ? (
+        ) : !ind ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+            <p className="text-gray-500">
+              {indicator === 'C1'
+                ? 'C1 e um indicador de equipe (ratio), nao de paciente individual.'
+                : 'Indicador nao encontrado.'
+              }
+            </p>
+          </div>
+        ) : patientScores.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
             <p className="text-gray-500">Nenhum paciente elegivel para este indicador.</p>
-            <p className="text-sm text-gray-400 mt-1">Adicione tags aos pacientes para categoriza-los.</p>
+            <p className="text-sm text-gray-400 mt-1">
+              Adicione a tag de elegibilidade ({ind.eligibilityTags.join(' ou ')}) nos pacientes.
+            </p>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -168,43 +173,44 @@ export default function IndicatorDetailPage() {
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Paciente</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Idade</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">MA</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
-                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Tags</th>
+                    <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Equipe</th>
+                    <th className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Score</th>
+                    {ind.practices.map(p => (
+                      <th key={p.tag} className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider px-2 py-3" title={p.label}>
+                        {p.tag.split('-')[1]}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {sorted.map(patient => {
-                    const isCompliant = complianceTags.length > 0 && complianceTags.every(t => (patient.tags || []).includes(t))
+                  {patientScores.map(ps => {
+                    const cls = getClassification(ps.percentage, 100)
                     return (
-                      <tr key={patient.id} className="hover:bg-gray-50 transition">
+                      <tr key={ps.patient.id} className="hover:bg-gray-50 transition">
                         <td className="px-4 py-3">
-                          <Link href={`/patients/${patient.id}`} className="text-sm font-medium text-blue-600 hover:underline">
-                            {patient.name}
+                          <Link href={`/patients/${ps.patient.id}`} className="text-sm font-medium text-blue-600 hover:underline">
+                            {ps.patient.name}
                           </Link>
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(patient.date_of_birth)}a</td>
-                        <td className="px-4 py-3 text-sm text-gray-600">{patient.micro_area || '-'}</td>
-                        <td className="px-4 py-3">
-                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            isCompliant ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                          }`}>
-                            {isCompliant ? 'Em dia' : 'Pendente'}
+                        <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(ps.patient.date_of_birth)}a</td>
+                        <td className="px-4 py-3 text-sm text-gray-600">{ps.patient.micro_area || '-'}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">{ps.patient.team_type === 76 ? 'eAP' : 'eSF'}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${classificationBg(cls)}`}>
+                            {ps.score}/{ps.maxPossible} ({ps.percentage.toFixed(0)}%)
                           </span>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {(patient.tags || []).slice(0, 4).map(tag => (
-                              <span key={tag} className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTagColor(tag)}`}>
-                                {tag}
-                              </span>
-                            ))}
-                            {(patient.tags || []).length > 4 && (
-                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-                                +{(patient.tags || []).length - 4}
-                              </span>
+                        {ps.practices.map(p => (
+                          <td key={p.tag} className="px-2 py-3 text-center">
+                            {p.exempt ? (
+                              <span className="text-xs text-gray-400" title="Isento eAP 76">—</span>
+                            ) : p.achieved ? (
+                              <span className="text-green-600 font-bold text-sm" title={`${p.label} (${p.points}pts)`}>✓</span>
+                            ) : (
+                              <span className="text-red-400 text-sm" title={`${p.label} (${p.points}pts)`}>✗</span>
                             )}
-                          </div>
-                        </td>
+                          </td>
+                        ))}
                       </tr>
                     )
                   })}
