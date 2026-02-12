@@ -33,14 +33,18 @@ export function isWithinPeriod(dateStr: string | null | undefined, periodDays: n
   return days <= periodDays
 }
 
-export function ageInYears(dateOfBirth: string): number {
+export function ageInYears(dateOfBirth: string | null | undefined): number {
+  if (!dateOfBirth) return 0
   const dob = parseISO(dateOfBirth)
+  if (!isValid(dob)) return 0
   const ageDays = differenceInDays(today(), dob)
   return Math.floor(ageDays / 365.25)
 }
 
-export function ageInMonths(dateOfBirth: string): number {
+export function ageInMonths(dateOfBirth: string | null | undefined): number {
+  if (!dateOfBirth) return 0
   const dob = parseISO(dateOfBirth)
+  if (!isValid(dob)) return 0
   const ageDays = differenceInDays(today(), dob)
   return Math.floor(ageDays / 30.44)
 }
