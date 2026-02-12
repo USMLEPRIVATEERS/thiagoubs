@@ -12,8 +12,8 @@ import { getClassification, classificationBg, classificationLabel } from '@/lib/
 export default function DashboardPage() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
-  const [microAreas, setMicroAreas] = useState<number[]>([])
-  const [selectedMicroAreas, setSelectedMicroAreas] = useState<number[]>([])
+  const [microAreas, setMicroAreas] = useState<string[]>([])
+  const [selectedMicroAreas, setSelectedMicroAreas] = useState<string[]>([])
   const [filterEligibility, setFilterEligibility] = useState<string>('all')
   const supabase = useMemo(() => createClient(), [])
   const initializedRef = useRef(false)
@@ -30,7 +30,7 @@ export default function DashboardPage() {
     const pts = (data as Patient[]) || []
     setPatients(pts)
 
-    const areas = [...new Set(pts.map(p => p.micro_area).filter(Boolean) as number[])].sort()
+    const areas = [...new Set(pts.map(p => String(p.micro_area || '')).filter(Boolean))].sort()
     setMicroAreas(areas)
     if (!initializedRef.current) {
       setSelectedMicroAreas(areas)
@@ -46,7 +46,7 @@ export default function DashboardPage() {
 
   // Filter patients by microarea
   const filteredPatients = patients.filter(p => {
-    const matchesMA = selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area!)
+    const matchesMA = selectedMicroAreas.length === 0 || selectedMicroAreas.includes(String(p.micro_area || ''))
     const matchesElig = filterEligibility === 'all' || (p.tags || []).includes(filterEligibility)
     return matchesMA && matchesElig
   })

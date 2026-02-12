@@ -96,7 +96,7 @@ export default function ImportPage() {
       }
       if (mapping.cpf && row[mapping.cpf]) patient.cpf = row[mapping.cpf].replace(/\D/g, '')
       if (mapping.cns && row[mapping.cns]) patient.cns = row[mapping.cns].trim()
-      if (mapping.micro_area && row[mapping.micro_area]) patient.micro_area = Number(row[mapping.micro_area])
+      if (mapping.micro_area && row[mapping.micro_area]) patient.micro_area = row[mapping.micro_area].trim()
 
       if (patient.cpf) {
         cpfsInImport.push(patient.cpf as string)

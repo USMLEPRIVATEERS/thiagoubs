@@ -44,14 +44,14 @@ export default function PatientsPage() {
     loadPatients()
   }, [supabase])
 
-  const microAreas = [...new Set(patients.map(p => p.micro_area).filter(Boolean) as number[])].sort()
+  const microAreas = [...new Set(patients.map(p => String(p.micro_area || '')).filter(Boolean))].sort()
 
   // Collect all tags used by patients for the filter dropdown
   const usedTags = [...new Set(patients.flatMap(p => p.tags || []))].sort()
 
   const filtered = patients.filter(p => {
     const matchesSearch = search === '' || p.name.toLowerCase().includes(search.toLowerCase()) || p.cpf?.includes(search)
-    const matchesMA = filterMA === 'all' || p.micro_area === Number(filterMA)
+    const matchesMA = filterMA === 'all' || String(p.micro_area || '') === filterMA
     const matchesTag = filterTag === 'all' || (p.tags || []).includes(filterTag)
     return matchesSearch && matchesMA && matchesTag
   })
@@ -67,7 +67,7 @@ export default function PatientsPage() {
       sex: form.sex,
       cpf: form.cpf.replace(/\D/g, '') || null,
       cns: form.cns.trim() || null,
-      micro_area: form.micro_area ? Number(form.micro_area) : null,
+      micro_area: form.micro_area?.trim() || null,
       team_type: Number(form.team_type),
       tags: formTags,
       status: 'active',

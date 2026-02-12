@@ -41,7 +41,7 @@ export interface IndicatorSummary {
 export interface UrgentAction {
   patientId: string
   patientName: string
-  microArea?: number
+  microArea?: string | number
   indicator: string
   practiceCode: string
   practiceName: string

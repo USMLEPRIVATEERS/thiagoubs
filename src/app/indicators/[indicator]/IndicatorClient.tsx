@@ -17,8 +17,8 @@ export default function IndicatorDetailPage() {
   const indicator = (params.indicator as string).toUpperCase()
   const [patients, setPatients] = useState<Patient[]>([])
   const [loading, setLoading] = useState(true)
-  const [microAreas, setMicroAreas] = useState<number[]>([])
-  const [selectedMicroAreas, setSelectedMicroAreas] = useState<number[]>([])
+  const [microAreas, setMicroAreas] = useState<string[]>([])
+  const [selectedMicroAreas, setSelectedMicroAreas] = useState<string[]>([])
   const supabase = useMemo(() => createClient(), [])
   const initializedRef = useRef(false)
 
@@ -36,7 +36,7 @@ export default function IndicatorDetailPage() {
       return
     }
 
-    const areas = [...new Set(data.map((p: Patient) => p.micro_area).filter(Boolean) as number[])].sort()
+    const areas = [...new Set(data.map((p: Patient) => String(p.micro_area || '')).filter(Boolean))].sort()
     setMicroAreas(areas)
     if (!initializedRef.current) {
       setSelectedMicroAreas(areas)
@@ -55,7 +55,7 @@ export default function IndicatorDetailPage() {
 
   // Filter by microarea then find eligible patients
   const filteredPatients = patients.filter(p =>
-    selectedMicroAreas.length === 0 || selectedMicroAreas.includes(p.micro_area!)
+    selectedMicroAreas.length === 0 || selectedMicroAreas.includes(String(p.micro_area || ''))
   )
 
   const eligible = ind

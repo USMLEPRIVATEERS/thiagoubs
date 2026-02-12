@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, Component, type ReactNode } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -11,10 +11,40 @@ import { getTagColor, getTagLabel, getIndicatorsForTags, calculateScore, INDICAT
 import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
 import { formatDate, ageInYears } from '@/lib/utils/dates'
 
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null }
+  static getDerivedStateFromError(error: Error) { return { error: error.message } }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen bg-gray-50">
+          <Navbar />
+          <div className="max-w-4xl mx-auto px-4 py-12">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+              <h2 className="text-lg font-bold text-red-900 mb-2">Erro ao carregar paciente</h2>
+              <p className="text-sm text-red-700 font-mono break-all">{this.state.error}</p>
+              <div className="flex gap-3 mt-4">
+                <button onClick={() => window.location.reload()} className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Recarregar</button>
+                <Link href="/patients" className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50">Voltar</Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function PatientDetailPage() {
+  return <ErrorBoundary><PatientDetailContent /></ErrorBoundary>
+}
+
+function PatientDetailContent() {
   const params = useParams()
   const patientId = params.id as string
   const [patient, setPatient] = useState<Patient | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [conditions, setConditions] = useState<Condition[]>([])
   const [consultations, setConsultations] = useState<Consultation[]>([])
   const [measurements, setMeasurements] = useState<Measurement[]>([])
@@ -31,26 +61,32 @@ export default function PatientDetailPage() {
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
 
-    const { data: p } = await supabase.from('patients').select('*').eq('id', patientId).single()
-    if (!p) { setLoading(false); return }
-    setPatient(p as Patient)
+    try {
+      const { data: p, error: pError } = await supabase.from('patients').select('*').eq('id', patientId).single()
+      if (pError) { setLoadError(pError.message); setLoading(false); return }
+      if (!p) { setLoading(false); return }
+      setPatient(p as Patient)
 
-    const [conds, consults, meas, procs, visits, vaccs] = await Promise.all([
-      supabase.from('conditions').select('*').eq('patient_id', patientId).then(r => r.data || []),
-      supabase.from('consultations').select('*').eq('patient_id', patientId).order('consultation_date', { ascending: false }).then(r => r.data || []),
-      supabase.from('measurements').select('*').eq('patient_id', patientId).order('measurement_date', { ascending: false }).then(r => r.data || []),
-      supabase.from('procedures').select('*').eq('patient_id', patientId).order('procedure_date', { ascending: false }).then(r => r.data || []),
-      supabase.from('home_visits').select('*').eq('patient_id', patientId).order('visit_date', { ascending: false }).then(r => r.data || []),
-      supabase.from('vaccinations').select('*').eq('patient_id', patientId).order('dose_date', { ascending: false }).then(r => r.data || []),
-    ])
+      const [conds, consults, meas, procs, visits, vaccs] = await Promise.all([
+        supabase.from('conditions').select('*').eq('patient_id', patientId).then(r => r.data || []),
+        supabase.from('consultations').select('*').eq('patient_id', patientId).order('consultation_date', { ascending: false }).then(r => r.data || []),
+        supabase.from('measurements').select('*').eq('patient_id', patientId).order('measurement_date', { ascending: false }).then(r => r.data || []),
+        supabase.from('procedures').select('*').eq('patient_id', patientId).order('procedure_date', { ascending: false }).then(r => r.data || []),
+        supabase.from('home_visits').select('*').eq('patient_id', patientId).order('visit_date', { ascending: false }).then(r => r.data || []),
+        supabase.from('vaccinations').select('*').eq('patient_id', patientId).order('dose_date', { ascending: false }).then(r => r.data || []),
+      ])
 
-    setConditions(conds as Condition[])
-    setConsultations(consults as Consultation[])
-    setMeasurements(meas as Measurement[])
-    setProcedures(procs as Procedure[])
-    setHomeVisits(visits as HomeVisit[])
-    setVaccinations(vaccs as Vaccination[])
+      setConditions(conds as Condition[])
+      setConsultations(consults as Consultation[])
+      setMeasurements(meas as Measurement[])
+      setProcedures(procs as Procedure[])
+      setHomeVisits(visits as HomeVisit[])
+      setVaccinations(vaccs as Vaccination[])
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Erro desconhecido')
+    }
     setLoading(false)
   }, [supabase, patientId])
 
@@ -109,7 +145,18 @@ export default function PatientDetailPage() {
       <div className="min-h-screen bg-gray-50">
         <Navbar />
         <div className="max-w-7xl mx-auto px-4 py-12 text-center">
-          <p className="text-gray-500">Paciente nao encontrado.</p>
+          {loadError ? (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-lg mx-auto">
+              <p className="text-sm font-bold text-red-900 mb-2">Erro ao carregar</p>
+              <p className="text-xs text-red-700 font-mono break-all">{loadError}</p>
+              <div className="flex gap-3 mt-4 justify-center">
+                <button onClick={loadData} className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Tentar novamente</button>
+                <Link href="/patients" className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50">Voltar</Link>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-500">Paciente nao encontrado.</p>
+          )}
         </div>
       </div>
     )
@@ -160,7 +207,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Microarea</label>
-                <input type="number" value={editForm.micro_area || ''} onChange={e => setEditForm({ ...editForm, micro_area: Number(e.target.value) })}
+                <input value={editForm.micro_area || ''} onChange={e => setEditForm({ ...editForm, micro_area: e.target.value })}
                   className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm" />
               </div>
               <div>

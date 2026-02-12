@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS patients (
   gender_identity TEXT,
   cpf TEXT UNIQUE,
   cns TEXT,
-  micro_area INTEGER,
+  micro_area TEXT,
   team_type INTEGER CHECK (team_type IN (70, 76)) DEFAULT 70,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'moved', 'deceased')),
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -125,6 +125,9 @@ CREATE TABLE IF NOT EXISTS csv_imports (
   status TEXT DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'error')),
   error_log TEXT
 );
+
+-- Coluna tags (array de text para elegibilidade e boas praticas)
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT '{}';
 
 -- Indices para performance
 CREATE INDEX IF NOT EXISTS idx_conditions_patient ON conditions(patient_id);

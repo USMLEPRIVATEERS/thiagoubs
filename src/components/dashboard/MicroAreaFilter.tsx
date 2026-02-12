@@ -3,9 +3,9 @@
 import { cn } from '@/lib/utils/cn'
 
 interface Props {
-  microAreas: number[]
-  selected: number[]
-  onToggle: (area: number) => void
+  microAreas: string[]
+  selected: string[]
+  onToggle: (area: string) => void
   onSelectAll: () => void
 }
 

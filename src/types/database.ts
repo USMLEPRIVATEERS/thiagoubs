@@ -6,7 +6,7 @@ export interface Patient {
   gender_identity?: string
   cpf?: string
   cns?: string
-  micro_area?: number
+  micro_area?: string | number
   team_type: 70 | 76
   tags?: string[]
   status: 'active' | 'moved' | 'deceased'
