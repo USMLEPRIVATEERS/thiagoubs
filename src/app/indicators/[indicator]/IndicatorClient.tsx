@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -18,7 +18,8 @@ export default function IndicatorDetailPage() {
   const [loading, setLoading] = useState(true)
   const [microAreas, setMicroAreas] = useState<number[]>([])
   const [selectedMicroAreas, setSelectedMicroAreas] = useState<number[]>([])
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
+  const initializedRef = useRef(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -36,11 +37,14 @@ export default function IndicatorDetailPage() {
 
     const areas = [...new Set(data.map((p: Patient) => p.micro_area).filter(Boolean) as number[])].sort()
     setMicroAreas(areas)
-    if (selectedMicroAreas.length === 0) setSelectedMicroAreas(areas)
+    if (!initializedRef.current) {
+      setSelectedMicroAreas(areas)
+      initializedRef.current = true
+    }
 
     setPatients(data as Patient[])
     setLoading(false)
-  }, [supabase, selectedMicroAreas])
+  }, [supabase])
 
   useEffect(() => {
     loadData()

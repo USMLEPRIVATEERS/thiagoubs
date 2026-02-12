@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
@@ -15,7 +15,8 @@ export default function DashboardPage() {
   const [microAreas, setMicroAreas] = useState<number[]>([])
   const [selectedMicroAreas, setSelectedMicroAreas] = useState<number[]>([])
   const [filterTag, setFilterTag] = useState<string>('all')
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
+  const initializedRef = useRef(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -31,12 +32,13 @@ export default function DashboardPage() {
 
     const areas = [...new Set(pts.map(p => p.micro_area).filter(Boolean) as number[])].sort()
     setMicroAreas(areas)
-    if (selectedMicroAreas.length === 0) {
+    if (!initializedRef.current) {
       setSelectedMicroAreas(areas)
+      initializedRef.current = true
     }
 
     setLoading(false)
-  }, [supabase, selectedMicroAreas])
+  }, [supabase])
 
   useEffect(() => {
     loadData()

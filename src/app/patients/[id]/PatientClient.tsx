@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -27,7 +27,7 @@ export default function PatientDetailPage() {
   const [editTags, setEditTags] = useState<string[]>([])
   const [showTagEditor, setShowTagEditor] = useState(false)
   const [savingTags, setSavingTags] = useState(false)
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
 
   const loadData = useCallback(async () => {
     setLoading(true)
