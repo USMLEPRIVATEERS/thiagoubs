@@ -18,7 +18,7 @@ export default function Navbar() {
 
   async function handleLogout() {
     await supabase.auth.signOut()
-    router.push('/login')
+    router.push('/')
     router.refresh()
   }
 
