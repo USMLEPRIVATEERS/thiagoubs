@@ -5,38 +5,53 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
-import type { Patient } from '@/types/database'
+import type { Patient, Consultation, Condition, Measurement, Procedure, HomeVisit, Vaccination, Pregnancy } from '@/types/database'
 import { INDICATOR_LIST, calculateScore, calculateC7TeamScore, isC7Eligible, getTagColor, ELIGIBILITY_TAGS } from '@/lib/tags'
 import { getClassification, getC1Classification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
-import type { Consultation } from '@/types/database'
+import { getUrgentActions, type PatientData } from '@/lib/indicators/engine'
+import type { UrgentAction } from '@/types/indicator'
+import { formatDate } from '@/lib/utils/dates'
 
 export default function DashboardPage() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [consultations, setConsultations] = useState<Consultation[]>([])
+  const [conditions, setConditions] = useState<Condition[]>([])
+  const [measurements, setMeasurements] = useState<Measurement[]>([])
+  const [procedures, setProcedures] = useState<Procedure[]>([])
+  const [homeVisits, setHomeVisits] = useState<HomeVisit[]>([])
+  const [vaccinations, setVaccinations] = useState<Vaccination[]>([])
+  const [pregnancies, setPregnancies] = useState<Pregnancy[]>([])
   const [loading, setLoading] = useState(true)
   const [microAreas, setMicroAreas] = useState<string[]>([])
   const [selectedMicroAreas, setSelectedMicroAreas] = useState<string[]>([])
   const [filterEligibility, setFilterEligibility] = useState<string>('all')
+  const [suggestionsTab, setSuggestionsTab] = useState<'vencido' | 'semana' | 'mes' | 'geral'>('vencido')
   const supabase = useMemo(() => createClient(), [])
   const initializedRef = useRef(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
 
-    const { data } = await supabase
-      .from('patients')
-      .select('*')
-      .eq('status', 'active')
-      .order('name')
+    const [pRes, cRes, condRes, mRes, prcRes, hvRes, vacRes, pregRes] = await Promise.all([
+      supabase.from('patients').select('*').eq('status', 'active').order('name'),
+      supabase.from('consultations').select('*'),
+      supabase.from('conditions').select('*'),
+      supabase.from('measurements').select('*'),
+      supabase.from('procedures').select('*'),
+      supabase.from('home_visits').select('*'),
+      supabase.from('vaccinations').select('*'),
+      supabase.from('pregnancies').select('*'),
+    ])
 
-    const pts = (data as Patient[]) || []
+    const pts = (pRes.data as Patient[]) || []
     setPatients(pts)
-
-    // Load consultations for C1
-    const { data: consultData } = await supabase
-      .from('consultations')
-      .select('*')
-    setConsultations((consultData as Consultation[]) || [])
+    setConsultations((cRes.data as Consultation[]) || [])
+    setConditions((condRes.data as Condition[]) || [])
+    setMeasurements((mRes.data as Measurement[]) || [])
+    setProcedures((prcRes.data as Procedure[]) || [])
+    setHomeVisits((hvRes.data as HomeVisit[]) || [])
+    setVaccinations((vacRes.data as Vaccination[]) || [])
+    setPregnancies((pregRes.data as Pregnancy[]) || [])
 
     const areas = [...new Set(pts.map(p => String(p.micro_area || '')).filter(Boolean))].sort()
     setMicroAreas(areas)
@@ -63,6 +78,37 @@ export default function DashboardPage() {
   const usedEligibilityTags = ELIGIBILITY_TAGS.filter(t =>
     patients.some(p => (p.tags || []).includes(t))
   )
+
+  // Build per-patient data and calculate urgent actions
+  const allActions = useMemo(() => {
+    const filteredIds = new Set(filteredPatients.map(p => p.id))
+    const actions: UrgentAction[] = []
+
+    for (const patient of filteredPatients) {
+      const pid = patient.id
+      const patientData: PatientData = {
+        patient,
+        conditions: conditions.filter(c => c.patient_id === pid),
+        consultations: consultations.filter(c => c.patient_id === pid),
+        measurements: measurements.filter(m => m.patient_id === pid),
+        procedures: procedures.filter(p => p.patient_id === pid),
+        homeVisits: homeVisits.filter(h => h.patient_id === pid),
+        vaccinations: vaccinations.filter(v => v.patient_id === pid),
+        pregnancies: pregnancies.filter(p => p.patient_id === pid),
+      }
+      try {
+        actions.push(...getUrgentActions(patientData))
+      } catch {
+        // skip patients with calculation errors
+      }
+    }
+    return actions
+  }, [filteredPatients, conditions, consultations, measurements, procedures, homeVisits, vaccinations, pregnancies])
+
+  const overdue = allActions.filter(a => a.type === 'vencido')
+  const dueSoon = allActions.filter(a => a.type === 'vencendo')
+  const dueThisWeek = dueSoon.filter(a => (a.daysUntilDue || 0) <= 7)
+  const dueThisMonth = dueSoon.filter(a => (a.daysUntilDue || 0) > 7 && (a.daysUntilDue || 0) <= 30)
 
   // C1 — Mais Acesso: team-level ratio of programada / total
   const VALID_C1_CBOS = ['225142', '225170', '225130', '223565', '223505']
@@ -136,6 +182,53 @@ export default function DashboardPage() {
     }
   })
 
+  function renderActionList(actions: UrgentAction[], emptyMsg: string) {
+    if (actions.length === 0) {
+      return <p className="text-sm text-gray-400 py-4 text-center">{emptyMsg}</p>
+    }
+    // Group by patient
+    const byPatient = new Map<string, UrgentAction[]>()
+    for (const a of actions) {
+      const list = byPatient.get(a.patientId) || []
+      list.push(a)
+      byPatient.set(a.patientId, list)
+    }
+
+    return (
+      <div className="space-y-2 max-h-96 overflow-y-auto">
+        {[...byPatient.entries()].map(([pid, acts]) => (
+          <Link key={pid} href={`/patients/${pid}`}
+            className="block border border-gray-100 rounded-lg p-3 hover:bg-gray-50 transition">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-semibold text-gray-900">{acts[0].patientName}</span>
+              {acts[0].microArea && <span className="text-xs text-gray-400">MA {String(acts[0].microArea)}</span>}
+            </div>
+            <div className="space-y-0.5">
+              {acts.map((a, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span className={`px-1.5 py-0.5 rounded font-medium ${
+                    a.type === 'vencido' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                  }`}>
+                    {a.indicator}
+                  </span>
+                  <span className="text-gray-700">{a.practiceName}</span>
+                  <span className={`ml-auto flex-shrink-0 ${
+                    a.type === 'vencido' ? 'text-red-600 font-semibold' : 'text-yellow-600'
+                  }`}>
+                    {a.type === 'vencido'
+                      ? `${a.daysOverdue}d atrasado`
+                      : `em ${a.daysUntilDue}d`
+                    }
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Link>
+        ))}
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
@@ -177,6 +270,53 @@ export default function DashboardPage() {
               )}
               onSelectAll={() => setSelectedMicroAreas(microAreas)}
             />
+          </div>
+        )}
+
+        {/* Suggestions / Actions section */}
+        {!loading && (overdue.length > 0 || dueSoon.length > 0) && (
+          <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">
+              Acoes Necessarias
+              <span className="ml-2 text-gray-400 font-normal text-xs">
+                ({overdue.length} vencidas, {dueSoon.length} vencendo)
+              </span>
+            </h2>
+
+            {/* Tabs */}
+            <div className="flex gap-1 mb-4 border-b border-gray-200">
+              {([
+                { key: 'vencido' as const, label: 'Vencidas', count: overdue.length, color: 'red' },
+                { key: 'semana' as const, label: 'Esta Semana', count: dueThisWeek.length, color: 'yellow' },
+                { key: 'mes' as const, label: 'Este Mes', count: dueThisMonth.length, color: 'blue' },
+                { key: 'geral' as const, label: 'Todas', count: allActions.length, color: 'gray' },
+              ]).map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setSuggestionsTab(tab.key)}
+                  className={`px-3 py-2 text-xs font-medium border-b-2 transition ${
+                    suggestionsTab === tab.key
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {tab.label}
+                  {tab.count > 0 && (
+                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs ${
+                      tab.color === 'red' ? 'bg-red-100 text-red-700' :
+                      tab.color === 'yellow' ? 'bg-yellow-100 text-yellow-700' :
+                      tab.color === 'blue' ? 'bg-blue-100 text-blue-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>{tab.count}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {suggestionsTab === 'vencido' && renderActionList(overdue, 'Nenhuma acao vencida!')}
+            {suggestionsTab === 'semana' && renderActionList(dueThisWeek, 'Nenhuma acao para esta semana.')}
+            {suggestionsTab === 'mes' && renderActionList(dueThisMonth, 'Nenhuma acao para este mes.')}
+            {suggestionsTab === 'geral' && renderActionList(allActions, 'Nenhuma acao pendente.')}
           </div>
         )}
 

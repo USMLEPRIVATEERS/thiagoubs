@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import TagSelector from '@/components/ui/TagSelector'
+import QuickAddForms from '@/components/patients/QuickAddForms'
 import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination, Pregnancy } from '@/types/database'
 import { getTagColor, getTagLabel, getIndicatorsForTags, calculateScore, INDICATORS, ELIGIBILITY_TAGS } from '@/lib/tags'
 import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
@@ -304,6 +305,9 @@ function PatientDetailContent() {
           )}
         </div>
 
+        {/* Quick Add Data Entry */}
+        <QuickAddForms patientId={patient.id} onSaved={loadData} />
+
         {/* Tags Section */}
         <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
           <div className="flex items-center justify-between mb-3">
@@ -398,41 +402,85 @@ function PatientDetailContent() {
         {calculatedIndicators.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
             <h2 className="text-sm font-semibold text-gray-900 mb-3">
-              Indicadores Calculados
-              <span className="ml-2 text-gray-400 font-normal text-xs">(baseado nos dados reais do paciente)</span>
+              Indicadores
+              <span className="ml-2 text-gray-400 font-normal text-xs">(calculado automaticamente)</span>
             </h2>
-            <div className="space-y-3">
+            <div className="space-y-4">
               {calculatedIndicators.map(result => {
                 const cls = result.classification
+                const pendingPractices = result.practices.filter(p => !p.achieved && !p.exempt)
+                const overduePractices = pendingPractices.filter(p => p.daysRemaining !== null && p.daysRemaining < 0)
+                const dueSoonPractices = pendingPractices.filter(p => p.daysRemaining !== null && p.daysRemaining >= 0 && p.daysRemaining <= 30)
                 return (
-                  <div key={result.indicator} className="border border-gray-100 rounded-lg p-3">
+                  <div key={result.indicator} className="border border-gray-100 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
-                      <Link href={`/indicators/${result.indicator.toLowerCase()}`} className="text-xs font-bold text-blue-600 hover:underline">
+                      <Link href={`/indicators/${result.indicator.toLowerCase()}`} className="text-sm font-bold text-blue-600 hover:underline">
                         {result.indicator} — {result.name}
                       </Link>
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${classificationBg(cls)}`}>
-                        {result.totalScore.toFixed(0)}/{result.maxScore} ({result.percentage.toFixed(0)}%) — {classificationLabel(cls)}
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${classificationBg(cls)}`}>
+                        {result.percentage.toFixed(0)}% — {classificationLabel(cls)}
                       </span>
                     </div>
+
                     {/* Progress bar */}
-                    <div className="w-full bg-gray-100 rounded-full h-1.5 mb-2">
+                    <div className="w-full bg-gray-100 rounded-full h-2 mb-3">
                       <div
-                        className={`h-1.5 rounded-full ${
+                        className={`h-2 rounded-full transition-all ${
                           cls === 'otimo' ? 'bg-green-500' : cls === 'bom' ? 'bg-blue-500' : cls === 'suficiente' ? 'bg-orange-500' : 'bg-red-500'
                         }`}
                         style={{ width: `${Math.min(result.percentage, 100)}%` }}
                       />
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+
+                    {/* Urgent actions banner */}
+                    {overduePractices.length > 0 && (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-2 mb-2">
+                        <p className="text-xs font-semibold text-red-800 mb-1">Vencido:</p>
+                        {overduePractices.map(p => (
+                          <p key={p.code} className="text-xs text-red-700">
+                            {p.name} — vencido ha {Math.abs(p.daysRemaining!)} dias
+                            {p.dueDate && <span className="text-red-500"> (venceu {formatDate(p.dueDate)})</span>}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {dueSoonPractices.length > 0 && (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-2">
+                        <p className="text-xs font-semibold text-yellow-800 mb-1">Vence em breve:</p>
+                        {dueSoonPractices.map(p => (
+                          <p key={p.code} className="text-xs text-yellow-700">
+                            {p.name} — vence em {p.daysRemaining} dias
+                            {p.dueDate && <span className="text-yellow-600"> ({formatDate(p.dueDate)})</span>}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* All practices */}
+                    <div className="space-y-1">
                       {result.practices.map(p => (
-                        <div key={p.code} className={`flex items-start gap-1.5 text-xs px-2 py-1 rounded ${
+                        <div key={p.code} className={`flex items-start gap-2 text-xs px-2.5 py-1.5 rounded ${
                           p.exempt ? 'text-gray-400 bg-gray-50' : p.achieved ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'
                         }`}>
-                          <span className="flex-shrink-0">{p.exempt ? '—' : p.achieved ? '✓' : '✗'}</span>
-                          <div>
-                            <span className="font-medium">{p.code}: {p.name}</span>
-                            <span className="text-gray-500 ml-1">({p.points}/{p.maxPoints}pts)</span>
+                          <span className="flex-shrink-0 mt-0.5">{p.exempt ? '—' : p.achieved ? '✓' : '✗'}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="font-medium">{p.code}: {p.name}</span>
+                              {p.lastDate && <span className="text-gray-400 flex-shrink-0">Ultimo: {formatDate(p.lastDate)}</span>}
+                            </div>
                             {p.details && <p className="text-gray-500 mt-0.5">{p.details}</p>}
+                            {!p.achieved && !p.exempt && p.dueDate && (
+                              <p className="mt-0.5">
+                                <span className={p.daysRemaining !== null && p.daysRemaining < 0 ? 'text-red-600 font-semibold' : 'text-yellow-600'}>
+                                  Proximo: {formatDate(p.dueDate)}
+                                  {p.daysRemaining !== null && (
+                                    p.daysRemaining < 0
+                                      ? ` (${Math.abs(p.daysRemaining)}d atrasado)`
+                                      : ` (em ${p.daysRemaining}d)`
+                                  )}
+                                </span>
+                              </p>
+                            )}
                           </div>
                         </div>
                       ))}
