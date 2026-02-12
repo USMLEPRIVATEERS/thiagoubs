@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS patients (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   date_of_birth DATE NOT NULL,
-  age_years INTEGER GENERATED ALWAYS AS (EXTRACT(YEAR FROM age(CURRENT_DATE, date_of_birth))::INTEGER) STORED,
   sex TEXT CHECK (sex IN ('M', 'F')),
   gender_identity TEXT,
   cpf TEXT UNIQUE,

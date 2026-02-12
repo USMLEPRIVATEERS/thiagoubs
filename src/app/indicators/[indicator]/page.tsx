@@ -12,6 +12,7 @@ import { INDICATOR_NAMES } from '@/types/indicator'
 import { calculateAllIndicators, getApplicableIndicators } from '@/lib/indicators/engine'
 import type { PatientData } from '@/lib/indicators/engine'
 import { classificationBg, classificationLabel } from '@/lib/utils/scoring'
+import { ageInYears } from '@/lib/utils/dates'
 
 interface PatientRow {
   patient: Patient
@@ -100,7 +101,7 @@ export default function IndicatorDetailPage() {
       ...rows[0].result.practices.map(p => p.code + ' - ' + p.name)]
     const csvRows = rows.map(r => [
       r.patient.name,
-      r.patient.age_years,
+      ageInYears(r.patient.date_of_birth),
       r.patient.micro_area || '-',
       r.result.percentage.toFixed(1),
       classificationLabel(r.result.classification),
@@ -183,7 +184,7 @@ export default function IndicatorDetailPage() {
                           {patient.name}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{patient.age_years}a</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(patient.date_of_birth)}a</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{patient.micro_area || '-'}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${classificationBg(result.classification)}`}>

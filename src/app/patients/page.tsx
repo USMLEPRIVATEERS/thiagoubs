@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import type { Patient } from '@/types/database'
+import { ageInYears } from '@/lib/utils/dates'
 
 export default function PatientsPage() {
   const [patients, setPatients] = useState<Patient[]>([])
@@ -96,7 +97,7 @@ export default function PatientsPage() {
                           {p.name}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{p.age_years}a</td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(p.date_of_birth)}a</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{p.sex}</td>
                       <td className="px-4 py-3 text-sm text-gray-600 font-mono">{p.cpf || '-'}</td>
                       <td className="px-4 py-3 text-sm text-gray-600">{p.micro_area || '-'}</td>

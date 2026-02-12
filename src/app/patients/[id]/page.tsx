@@ -12,7 +12,7 @@ import { INDICATOR_NAMES } from '@/types/indicator'
 import { calculateAllIndicators, getApplicableIndicators } from '@/lib/indicators/engine'
 import type { PatientData } from '@/lib/indicators/engine'
 import { classificationBg, classificationLabel } from '@/lib/utils/scoring'
-import { formatDate } from '@/lib/utils/dates'
+import { formatDate, ageInYears } from '@/lib/utils/dates'
 
 export default function PatientDetailPage() {
   const params = useParams()
@@ -202,7 +202,7 @@ export default function PatientDetailPage() {
               </div>
               <div>
                 <p className="text-xs text-gray-500">Idade</p>
-                <p className="text-sm font-medium text-gray-900">{patient.age_years} anos</p>
+                <p className="text-sm font-medium text-gray-900">{ageInYears(patient.date_of_birth)} anos</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">Sexo</p>
