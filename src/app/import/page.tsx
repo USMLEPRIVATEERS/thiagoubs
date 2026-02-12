@@ -16,7 +16,7 @@ export default function ImportPage() {
   const [parsedData, setParsedData] = useState<ParsedCSV | null>(null)
   const [mapping, setMapping] = useState<ColumnMapping>({})
   const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<{ success: number; errors: string[] } | null>(null)
+  const [result, setResult] = useState<{ success: number; updated: number; errors: string[] } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const supabase = useMemo(() => createClient(), [])
 
@@ -63,6 +63,30 @@ export default function ImportPage() {
 
     const errors: string[] = []
     let success = 0
+    let updated = 0
+
+    // Collect all CPFs to check for duplicates in one query
+    const cpfsToCheck: string[] = []
+    for (const row of parsedData.rows) {
+      let cpf = ''
+      if (mapping.cpf_or_cns && row[mapping.cpf_or_cns]) {
+        const detected = detectCpfOrCns(row[mapping.cpf_or_cns])
+        if (detected.type === 'cpf') cpf = detected.cleaned
+      }
+      if (mapping.cpf && row[mapping.cpf]) cpf = row[mapping.cpf].replace(/\D/g, '')
+      if (cpf) cpfsToCheck.push(cpf)
+    }
+
+    // Fetch existing CPFs in batches of 500
+    const existingCpfs = new Set<string>()
+    for (let i = 0; i < cpfsToCheck.length; i += 500) {
+      const batch = cpfsToCheck.slice(i, i + 500)
+      const { data } = await supabase
+        .from('patients')
+        .select('cpf')
+        .in('cpf', batch)
+      if (data) data.forEach(p => { if (p.cpf) existingCpfs.add(p.cpf) })
+    }
 
     for (let i = 0; i < parsedData.rows.length; i++) {
       const row = parsedData.rows[i]
@@ -91,6 +115,8 @@ export default function ImportPage() {
         if (mapping.cns && row[mapping.cns]) patient.cns = row[mapping.cns].trim()
         if (mapping.micro_area && row[mapping.micro_area]) patient.micro_area = Number(row[mapping.micro_area])
 
+        const isDuplicate = typeof patient.cpf === 'string' && existingCpfs.has(patient.cpf)
+
         if (patient.cpf) {
           const { error } = await supabase
             .from('patients')
@@ -100,13 +126,14 @@ export default function ImportPage() {
           const { error } = await supabase.from('patients').insert(patient)
           if (error) { errors.push(`Linha ${i + 2}: ${error.message}`); continue }
         }
-        success++
+        if (isDuplicate) updated++
+        else success++
       } catch {
         errors.push(`Linha ${i + 2}: Erro inesperado`)
       }
     }
 
-    setResult({ success, errors })
+    setResult({ success, updated, errors })
     setImporting(false)
     setStep('done')
   }
@@ -125,7 +152,7 @@ export default function ImportPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-6">
             <h2 className="text-sm font-semibold text-gray-900 mb-4">Como voce quer importar?</h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {/* Paste option */}
               <button
                 onClick={() => setShowPasteModal(true)}
@@ -153,6 +180,18 @@ export default function ImportPage() {
                   className="hidden"
                 />
               </label>
+
+              {/* Tag assignment option */}
+              <Link
+                href="/import/tags"
+                className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-gray-300 rounded-xl hover:border-green-400 hover:bg-green-50 transition text-center"
+              >
+                <span className="text-3xl">🏷️</span>
+                <span className="text-sm font-semibold text-gray-900">Atribuir Tags</span>
+                <span className="text-xs text-gray-500">
+                  Cole planilha do SUS e atribua tags (Diabetes, Hipertensao, etc) aos pacientes ja cadastrados
+                </span>
+              </Link>
             </div>
           </div>
         )}
@@ -340,8 +379,13 @@ export default function ImportPage() {
             }`}>
               <h2 className="text-sm font-semibold text-gray-900 mb-2">Resultado</h2>
               <p className="text-sm text-green-700 font-medium">
-                {result.success} pacientes adicionados com sucesso
+                {result.success} pacientes novos adicionados
               </p>
+              {result.updated > 0 && (
+                <p className="text-sm text-amber-700 font-medium">
+                  {result.updated} pacientes ja existiam (atualizados por CPF)
+                </p>
+              )}
               {result.errors.length > 0 && (
                 <div className="mt-3">
                   <p className="text-sm text-red-700 font-medium">{result.errors.length} erros:</p>
