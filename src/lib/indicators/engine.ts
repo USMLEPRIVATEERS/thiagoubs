@@ -22,8 +22,8 @@ export interface PatientData {
 
 const DIABETES_CID10 = /^E1[014]/
 const DIABETES_CIAP2 = /^T(89|90)$/
-// C5: CID-10 corrected - NOT including I16, goes up to I15.9 + O10/O11
-const HYPERTENSION_CID10 = /^(I1[0-5]|O1[01])/
+// C5: CID-10 I10-I16 (all variations) + O10/O11
+const HYPERTENSION_CID10 = /^(I1[0-6]|O1[01])/
 const HYPERTENSION_CIAP2 = /^K8[67]$/
 
 export function getApplicableIndicators(data: PatientData): string[] {

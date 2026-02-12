@@ -8,12 +8,16 @@ export function getClassification(score: number, maxScore: number): Classificati
   return 'regular'
 }
 
-// C1 uses CORRECTED parameters from PDF
+// C1 classification per spec:
+// Otimo: >50% e ≤70%
+// Bom: >40% e ≤50% OR >70% e ≤80%
+// Suficiente: >30% e ≤40% OR >80% e ≤90%
+// Regular: ≤30% OR >90%
 export function getC1Classification(pctProgramada: number): Classification {
   if (pctProgramada > 50 && pctProgramada <= 70) return 'otimo'
-  if (pctProgramada > 30 && pctProgramada <= 50) return 'bom'
-  if (pctProgramada > 10 && pctProgramada <= 30) return 'suficiente'
-  return 'regular' // <= 10 ou > 70
+  if ((pctProgramada > 40 && pctProgramada <= 50) || (pctProgramada > 70 && pctProgramada <= 80)) return 'bom'
+  if ((pctProgramada > 30 && pctProgramada <= 40) || (pctProgramada > 80 && pctProgramada <= 90)) return 'suficiente'
+  return 'regular' // ≤30% ou >90%
 }
 
 export function classificationColor(c: Classification): string {

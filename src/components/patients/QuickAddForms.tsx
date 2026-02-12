@@ -8,7 +8,7 @@ interface QuickAddFormsProps {
   onSaved: () => void
 }
 
-type FormType = 'consulta' | 'medicao' | 'procedimento' | 'vacina' | 'visita' | null
+type FormType = 'consulta' | 'medicao' | 'procedimento' | 'vacina' | 'visita' | 'condicao' | 'gestacao' | null
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
@@ -39,6 +39,8 @@ export default function QuickAddForms({ patientId, onSaved }: QuickAddFormsProps
     { key: 'procedimento', label: 'Procedimento', icon: '🔬' },
     { key: 'vacina', label: 'Vacina', icon: '💉' },
     { key: 'visita', label: 'Visita ACS', icon: '🏠' },
+    { key: 'condicao', label: 'Diagnostico', icon: '📋' },
+    { key: 'gestacao', label: 'Gestacao', icon: '🤰' },
   ]
 
   return (
@@ -77,6 +79,12 @@ export default function QuickAddForms({ patientId, onSaved }: QuickAddFormsProps
       )}
       {activeForm === 'visita' && (
         <VisitaForm saving={saving} onSave={(r) => save('home_visits', r)} onCancel={() => setActiveForm(null)} />
+      )}
+      {activeForm === 'condicao' && (
+        <CondicaoForm saving={saving} onSave={(r) => save('conditions', r)} onCancel={() => setActiveForm(null)} />
+      )}
+      {activeForm === 'gestacao' && (
+        <GestacaoForm saving={saving} onSave={(r) => save('pregnancies', r)} onCancel={() => setActiveForm(null)} />
       )}
     </div>
   )
@@ -355,6 +363,136 @@ function VisitaForm({ saving, onSave, onCancel }: { saving: boolean; onSave: (r:
         <button disabled={saving || !date} onClick={() => onSave({
           visit_date: date, visitor_cbo: cbo, visit_reason: reason || null,
         })} className="px-4 py-1.5 bg-orange-600 text-white text-xs font-medium rounded-lg hover:bg-orange-700 disabled:bg-orange-300 transition">
+          {saving ? 'Salvando...' : 'Salvar'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs rounded-lg hover:bg-gray-50">Cancelar</button>
+      </div>
+    </div>
+  )
+}
+
+// ── Condicao/Diagnostico ──
+function CondicaoForm({ saving, onSave, onCancel }: { saving: boolean; onSave: (r: Record<string, unknown>) => void; onCancel: () => void }) {
+  const [code, setCode] = useState('')
+  const [system, setSystem] = useState<'CID10' | 'CIAP2'>('CID10')
+  const [description, setDescription] = useState('')
+  const [diagDate, setDiagDate] = useState(todayStr())
+
+  const presets = [
+    { code: 'E11', system: 'CID10' as const, desc: 'Diabetes mellitus tipo 2' },
+    { code: 'E10', system: 'CID10' as const, desc: 'Diabetes mellitus tipo 1' },
+    { code: 'E14', system: 'CID10' as const, desc: 'Diabetes mellitus NE' },
+    { code: 'I10', system: 'CID10' as const, desc: 'Hipertensao essencial (primaria)' },
+    { code: 'I11', system: 'CID10' as const, desc: 'Doenca cardiaca hipertensiva' },
+    { code: 'T89', system: 'CIAP2' as const, desc: 'Diabetes insulino-dep.' },
+    { code: 'T90', system: 'CIAP2' as const, desc: 'Diabetes nao insulino-dep.' },
+    { code: 'K86', system: 'CIAP2' as const, desc: 'Hipertensao sem complicacao' },
+    { code: 'K87', system: 'CIAP2' as const, desc: 'Hipertensao com complicacao' },
+  ]
+
+  return (
+    <div className="border border-indigo-200 bg-indigo-50 rounded-lg p-4 space-y-3">
+      <p className="text-xs font-semibold text-indigo-900">Novo Diagnostico/Condicao</p>
+      <div className="flex flex-wrap gap-1.5 mb-1">
+        <span className="text-xs text-gray-500">Atalhos:</span>
+        {presets.map(p => (
+          <button key={`${p.system}-${p.code}`} onClick={() => { setCode(p.code); setSystem(p.system); setDescription(p.desc) }}
+            className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded hover:bg-indigo-200 transition">
+            {p.code} {p.desc.split(' ')[0]}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Codigo</label>
+          <input value={code} onChange={e => setCode(e.target.value)} placeholder="E11"
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Sistema</label>
+          <select value={system} onChange={e => setSystem(e.target.value as 'CID10' | 'CIAP2')}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+            <option value="CID10">CID-10</option>
+            <option value="CIAP2">CIAP-2</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Descricao</label>
+          <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Diabetes mellitus tipo 2"
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Data diagnostico</label>
+          <input type="date" value={diagDate} onChange={e => setDiagDate(e.target.value)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button disabled={saving || !code} onClick={() => onSave({
+          code, code_system: system, description: description || null,
+          diagnosed_date: diagDate || null, status: 'active',
+        })} className="px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300 transition">
+          {saving ? 'Salvando...' : 'Salvar'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs rounded-lg hover:bg-gray-50">Cancelar</button>
+      </div>
+    </div>
+  )
+}
+
+// ── Gestacao ──
+function GestacaoForm({ saving, onSave, onCancel }: { saving: boolean; onSave: (r: Record<string, unknown>) => void; onCancel: () => void }) {
+  const [dum, setDum] = useState('')
+  const [firstPrenatal, setFirstPrenatal] = useState('')
+  const [outcome, setOutcome] = useState<'em_andamento' | 'parto' | 'aborto'>('em_andamento')
+  const [deliveryDate, setDeliveryDate] = useState('')
+
+  // Auto-calculate DPP (DUM + 280 days)
+  const dpp = dum ? new Date(new Date(dum).getTime() + 280 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10) : ''
+
+  return (
+    <div className="border border-pink-200 bg-pink-50 rounded-lg p-4 space-y-3">
+      <p className="text-xs font-semibold text-pink-900">Nova Gestacao</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">DUM (Ultima Menstruacao)</label>
+          <input type="date" value={dum} onChange={e => setDum(e.target.value)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">DPP (calculado)</label>
+          <input type="date" value={dpp} readOnly
+            className="w-full px-2 py-1.5 border border-gray-200 bg-gray-100 rounded text-sm text-gray-500" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">1o Pre-natal</label>
+          <input type="date" value={firstPrenatal} onChange={e => setFirstPrenatal(e.target.value)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Desfecho</label>
+          <select value={outcome} onChange={e => setOutcome(e.target.value as 'em_andamento' | 'parto' | 'aborto')}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+            <option value="em_andamento">Em andamento</option>
+            <option value="parto">Parto</option>
+            <option value="aborto">Aborto</option>
+          </select>
+        </div>
+        {outcome === 'parto' && (
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Data do parto</label>
+            <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm" />
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <button disabled={saving || !dum} onClick={() => onSave({
+          dum, dpp: dpp || null,
+          first_prenatal_date: firstPrenatal || null,
+          outcome,
+          delivery_date: deliveryDate || null,
+        })} className="px-4 py-1.5 bg-pink-600 text-white text-xs font-medium rounded-lg hover:bg-pink-700 disabled:bg-pink-300 transition">
           {saving ? 'Salvando...' : 'Salvar'}
         </button>
         <button onClick={onCancel} className="px-4 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs rounded-lg hover:bg-gray-50">Cancelar</button>

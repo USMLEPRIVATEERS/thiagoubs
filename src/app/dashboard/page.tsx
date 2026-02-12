@@ -344,7 +344,7 @@ export default function DashboardPage() {
             <span>Total: <strong>{c1Summary.total}</strong></span>
           </div>
           <p className="text-xs text-gray-400 mt-2">
-            Meta: Otimo 50-70% | Bom 30-50% | Suficiente 10-30% | Regular &le;10% ou &gt;70%
+            Meta: Otimo 50-70% | Bom 40-50% ou 70-80% | Suficiente 30-40% ou 80-90% | Regular &le;30% ou &gt;90%
           </p>
         </div>
 
