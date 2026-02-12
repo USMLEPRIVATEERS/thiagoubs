@@ -26,11 +26,25 @@ function isDentist(cbo?: string, type?: string): boolean {
   return type === 'dentista'
 }
 
-// Codigos SIGTAP para testes rapidos
-const SIFILIS_CODES = ['02.14.01.007-0', '02.02.03.117-9']
-const HIV_CODES = ['02.14.01.005-4', '02.02.03.030-0']
-const HEPB_CODES = ['02.14.01.006-2', '02.02.03.070-9']
-const HEPC_CODES = ['02.14.01.008-9', '02.02.03.069-5']
+// Codigos SIGTAP para testes rapidos (conforme nota tecnica oficial)
+const SIFILIS_CODES = [
+  '02.14.01.007-4', '02.14.01.008-2', '02.14.01.025-2',
+  '02.02.03.109-8', '02.02.03.111-0', '02.02.03.117-9',
+]
+const HIV_CODES = [
+  '02.14.01.004-0', '02.14.01.027-9', '02.14.01.005-8',
+  '02.13.01.078-0', '02.13.01.050-0',
+]
+const HEPB_CODES = [
+  '02.14.01.010-4', '02.14.01.023-6',
+  '02.02.03.078-4', '02.02.03.097-0', '02.13.01.020-8',
+]
+const HEPC_CODES = [
+  '02.14.01.009-0', '02.14.01.030-9',
+  '02.02.03.005-9', '02.02.03.067-9',
+]
+// Vacina dTpa - codigo oficial
+const DTPA_VACCINE_CODE = '57'
 
 function hasSifilis(procedureCode: string, procedureName?: string): boolean {
   if (SIFILIS_CODES.includes(procedureCode)) return true
@@ -187,8 +201,7 @@ export function calculateC3(data: PatientData): IndicatorResult {
   // F: Vacina dTpa apos 20a semana (9 pts)
   const dtpaVaccines = vaccinations.filter(v => {
     const name = (v.vaccine_name || '').toLowerCase()
-    const code = (v.vaccine_code || '').toLowerCase()
-    const isDtpa = name.includes('dtpa') || code.includes('dtpa') || name.includes('triplice bacteriana') || name.includes('difteria')
+    const isDtpa = v.vaccine_code === DTPA_VACCINE_CODE || name.includes('dtpa') || name.includes('triplice bacteriana adulto')
     if (!isDtpa) return false
     // Verifica se foi apos 20a semana
     if (dum) {

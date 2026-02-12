@@ -20,7 +20,7 @@ export interface PatientData {
   pregnancies: Pregnancy[]
 }
 
-const DIABETES_CID10 = /^E1[0-4]\./
+const DIABETES_CID10 = /^E1[014]/
 const DIABETES_CIAP2 = /^T(89|90)$/
 // C5: CID-10 corrected - NOT including I16, goes up to I15.9 + O10/O11
 const HYPERTENSION_CID10 = /^(I1[0-5]|O1[01])/

@@ -6,10 +6,12 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import TagSelector from '@/components/ui/TagSelector'
-import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination } from '@/types/database'
+import type { Patient, Condition, Consultation, Measurement, Procedure, HomeVisit, Vaccination, Pregnancy } from '@/types/database'
 import { getTagColor, getTagLabel, getIndicatorsForTags, calculateScore, INDICATORS, ELIGIBILITY_TAGS } from '@/lib/tags'
 import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
 import { formatDate, ageInYears } from '@/lib/utils/dates'
+import { calculateAllIndicators } from '@/lib/indicators/engine'
+import type { IndicatorResult } from '@/types/indicator'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null as string | null }
@@ -51,6 +53,7 @@ function PatientDetailContent() {
   const [procedures, setProcedures] = useState<Procedure[]>([])
   const [homeVisits, setHomeVisits] = useState<HomeVisit[]>([])
   const [vaccinations, setVaccinations] = useState<Vaccination[]>([])
+  const [pregnancies, setPregnancies] = useState<Pregnancy[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<Partial<Patient>>({})
@@ -69,13 +72,14 @@ function PatientDetailContent() {
       if (!p) { setLoading(false); return }
       setPatient(p as Patient)
 
-      const [conds, consults, meas, procs, visits, vaccs] = await Promise.all([
+      const [conds, consults, meas, procs, visits, vaccs, pregs] = await Promise.all([
         supabase.from('conditions').select('*').eq('patient_id', patientId).then(r => r.data || []),
         supabase.from('consultations').select('*').eq('patient_id', patientId).order('consultation_date', { ascending: false }).then(r => r.data || []),
         supabase.from('measurements').select('*').eq('patient_id', patientId).order('measurement_date', { ascending: false }).then(r => r.data || []),
         supabase.from('procedures').select('*').eq('patient_id', patientId).order('procedure_date', { ascending: false }).then(r => r.data || []),
         supabase.from('home_visits').select('*').eq('patient_id', patientId).order('visit_date', { ascending: false }).then(r => r.data || []),
         supabase.from('vaccinations').select('*').eq('patient_id', patientId).order('dose_date', { ascending: false }).then(r => r.data || []),
+        supabase.from('pregnancies').select('*').eq('patient_id', patientId).then(r => r.data || []),
       ])
 
       setConditions(conds as Condition[])
@@ -84,6 +88,7 @@ function PatientDetailContent() {
       setProcedures(procs as Procedure[])
       setHomeVisits(visits as HomeVisit[])
       setVaccinations(vaccs as Vaccination[])
+      setPregnancies(pregs as Pregnancy[])
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Erro desconhecido')
     }
@@ -164,6 +169,26 @@ function PatientDetailContent() {
 
   const patientTags = patient.tags || []
   const eligibleIndicators = getIndicatorsForTags(patientTags)
+
+  // Calculate indicators from actual patient data
+  const calculatedIndicators: IndicatorResult[] = useMemo(() => {
+    if (!patient) return []
+    const data = {
+      patient,
+      conditions,
+      consultations,
+      measurements,
+      procedures,
+      homeVisits,
+      vaccinations,
+      pregnancies,
+    }
+    try {
+      return calculateAllIndicators(data)
+    } catch {
+      return []
+    }
+  }, [patient, conditions, consultations, measurements, procedures, homeVisits, vaccinations, pregnancies])
 
   // Build timeline from all records
   const timeline = [
@@ -368,6 +393,56 @@ function PatientDetailContent() {
             </div>
           )}
         </div>
+
+        {/* Calculated Indicators from patient data */}
+        {calculatedIndicators.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">
+              Indicadores Calculados
+              <span className="ml-2 text-gray-400 font-normal text-xs">(baseado nos dados reais do paciente)</span>
+            </h2>
+            <div className="space-y-3">
+              {calculatedIndicators.map(result => {
+                const cls = result.classification
+                return (
+                  <div key={result.indicator} className="border border-gray-100 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <Link href={`/indicators/${result.indicator.toLowerCase()}`} className="text-xs font-bold text-blue-600 hover:underline">
+                        {result.indicator} — {result.name}
+                      </Link>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${classificationBg(cls)}`}>
+                        {result.totalScore.toFixed(0)}/{result.maxScore} ({result.percentage.toFixed(0)}%) — {classificationLabel(cls)}
+                      </span>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="w-full bg-gray-100 rounded-full h-1.5 mb-2">
+                      <div
+                        className={`h-1.5 rounded-full ${
+                          cls === 'otimo' ? 'bg-green-500' : cls === 'bom' ? 'bg-blue-500' : cls === 'suficiente' ? 'bg-orange-500' : 'bg-red-500'
+                        }`}
+                        style={{ width: `${Math.min(result.percentage, 100)}%` }}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                      {result.practices.map(p => (
+                        <div key={p.code} className={`flex items-start gap-1.5 text-xs px-2 py-1 rounded ${
+                          p.exempt ? 'text-gray-400 bg-gray-50' : p.achieved ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'
+                        }`}>
+                          <span className="flex-shrink-0">{p.exempt ? '—' : p.achieved ? '✓' : '✗'}</span>
+                          <div>
+                            <span className="font-medium">{p.code}: {p.name}</span>
+                            <span className="text-gray-500 ml-1">({p.points}/{p.maxPoints}pts)</span>
+                            {p.details && <p className="text-gray-500 mt-0.5">{p.details}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Conditions */}
         {conditions.length > 0 && (

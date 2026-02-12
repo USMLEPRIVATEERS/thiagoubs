@@ -7,10 +7,12 @@ import Navbar from '@/components/ui/Navbar'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
 import type { Patient } from '@/types/database'
 import { INDICATOR_LIST, calculateScore, calculateC7TeamScore, isC7Eligible, getTagColor, ELIGIBILITY_TAGS } from '@/lib/tags'
-import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
+import { getClassification, getC1Classification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
+import type { Consultation } from '@/types/database'
 
 export default function DashboardPage() {
   const [patients, setPatients] = useState<Patient[]>([])
+  const [consultations, setConsultations] = useState<Consultation[]>([])
   const [loading, setLoading] = useState(true)
   const [microAreas, setMicroAreas] = useState<string[]>([])
   const [selectedMicroAreas, setSelectedMicroAreas] = useState<string[]>([])
@@ -29,6 +31,12 @@ export default function DashboardPage() {
 
     const pts = (data as Patient[]) || []
     setPatients(pts)
+
+    // Load consultations for C1
+    const { data: consultData } = await supabase
+      .from('consultations')
+      .select('*')
+    setConsultations((consultData as Consultation[]) || [])
 
     const areas = [...new Set(pts.map(p => String(p.micro_area || '')).filter(Boolean))].sort()
     setMicroAreas(areas)
@@ -55,6 +63,26 @@ export default function DashboardPage() {
   const usedEligibilityTags = ELIGIBILITY_TAGS.filter(t =>
     patients.some(p => (p.tags || []).includes(t))
   )
+
+  // C1 — Mais Acesso: team-level ratio of programada / total
+  const VALID_C1_CBOS = ['225142', '225170', '225130', '223565', '223505']
+  const c1Summary = useMemo(() => {
+    const patientIds = new Set(filteredPatients.map(p => p.id))
+    const teamConsults = consultations.filter(c => {
+      if (!patientIds.has(c.patient_id)) return false
+      if (c.professional_cbo) {
+        const norm = c.professional_cbo.replace(/[-.\\s]/g, '')
+        return VALID_C1_CBOS.some(valid => norm.startsWith(valid))
+      }
+      return c.professional_type === 'medico' || c.professional_type === 'enfermeiro'
+    })
+    const total = teamConsults.length
+    const programadas = teamConsults.filter(c => c.demand_type === 'programada').length
+    const espontaneas = total - programadas
+    const pctProgramada = total > 0 ? (programadas / total) * 100 : 0
+    const classification = getC1Classification(pctProgramada)
+    return { total, programadas, espontaneas, pctProgramada, classification }
+  }, [filteredPatients, consultations])
 
   // Calculate indicator summaries using proper scoring
   const indicatorSummaries = INDICATOR_LIST.map(ind => {
@@ -152,12 +180,31 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* C1 note */}
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
-          <p className="text-xs text-amber-700">
-            <span className="font-semibold">C1 — Mais Acesso:</span> Indicador de equipe (ratio demanda programada / total).
-            Parametros: Otimo &gt;50-70%, Bom &gt;30-50%, Suficiente &gt;10-30%, Regular ≤10% ou &gt;70%.
-            Nao e calculado por paciente individual.
+        {/* C1 — Mais Acesso card */}
+        <div className={`rounded-xl border p-5 mb-6 ${classificationBg(c1Summary.classification)}`}>
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <span className="text-xs font-bold text-gray-500">C1</span>
+              <p className="text-sm font-semibold text-gray-900">Mais Acesso</p>
+              <p className="text-xs text-gray-500">Proporcao consultas programadas / total (equipe)</p>
+            </div>
+            <div className="text-right">
+              <span className="text-2xl font-bold">{c1Summary.pctProgramada.toFixed(1)}%</span>
+              <p className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded-full inline-block ${classificationBg(c1Summary.classification)}`}>
+                {classificationLabel(c1Summary.classification)}
+              </p>
+            </div>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
+            <div className="h-2 rounded-full bg-current" style={{ width: `${Math.min(c1Summary.pctProgramada, 100)}%` }} />
+          </div>
+          <div className="flex gap-4 text-xs text-gray-600">
+            <span>Programadas: <strong>{c1Summary.programadas}</strong></span>
+            <span>Espontaneas: <strong>{c1Summary.espontaneas}</strong></span>
+            <span>Total: <strong>{c1Summary.total}</strong></span>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">
+            Meta: Otimo 50-70% | Bom 30-50% | Suficiente 10-30% | Regular &le;10% ou &gt;70%
           </p>
         </div>
 

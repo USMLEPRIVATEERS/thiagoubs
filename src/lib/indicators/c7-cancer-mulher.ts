@@ -3,17 +3,20 @@ import type { PatientData } from './engine'
 import { isWithinPeriod, daysUntilDue, getDueDate, ageInYears } from '@/lib/utils/dates'
 import { getClassification } from '@/lib/utils/scoring'
 
-// SIGTAP procedure codes
+// SIGTAP procedure codes (conforme nota tecnica oficial)
 const PAPANICOLAU_CODES = [
-  '02.03.01.001-9', // Exame citopatologico cervico vaginal
-  '02.03.01.008-6', // Exame citopatologico cervico vaginal/microflora
+  '02.03.01.001-9', // Exame citopatologico cervico-vaginal/microflora
+  '02.03.01.008-6', // Exame citopatologico cervico vaginal/microflora-rastreamento
+  '02.01.02.003-3', // Coleta de citopatologico de colo uterino
+  '02.01.02.007-6', // Coleta de material do colo do utero para exame molecular HPV
+  '02.01.02.008-4', // Entrega de material auto coleta para HPV
 ]
 const MAMOGRAFIA_CODES = [
   '02.04.03.018-8', // Mamografia bilateral para rastreamento
-  '02.04.03.003-0', // Mamografia bilateral
+  '02.04.03.003-0', // Mamografia
 ]
-// HPV vaccine codes no e-SUS
-const HPV_CODES = ['04', '49', '104', '105']
+// HPV vaccine codes oficiais
+const HPV_CODES = ['67', '93'] // 67=HPV quadrivalente, 93=HPV nonavalente
 
 function isMedEnf(cbo?: string, type?: string): boolean {
   if (cbo) {

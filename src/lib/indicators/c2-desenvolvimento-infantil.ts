@@ -19,13 +19,20 @@ function isMedEnf(cbo?: string, type?: string): boolean {
 const PENTA_CODES = ['09', '17', '29', '39', '42', '43', '46', '47', '58']
 // VIP/Polio inativada - 3 doses
 const VIP_CODES = ['22', '29', '43', '58']
-// Triplice Viral / SCR - 1 dose
+// Triplice Viral / SCR / SCRV - 2 doses (nao considerar antes de 12 meses)
 const SCR_CODES = ['24', '56']
 // Pneumo 10V - 2 doses
 const PNEUMO_CODES = ['26', '59', '106', '107']
 
-function countVaccineDoses(vaccinations: { vaccine_code: string; vaccine_name?: string }[], codes: string[], namePatterns: string[]): number {
+function countVaccineDoses(vaccinations: { vaccine_code: string; vaccine_name?: string; dose_date: string }[], codes: string[], namePatterns: string[], minAgeDays?: number, dob?: string): number {
   return vaccinations.filter(v => {
+    // Check age restriction (e.g. SCR must be after 12 months)
+    if (minAgeDays != null && dob) {
+      const birthDate = new Date(dob)
+      const doseDate = new Date(v.dose_date)
+      const ageDaysAtDose = Math.floor((doseDate.getTime() - birthDate.getTime()) / (1000 * 60 * 60 * 24))
+      if (ageDaysAtDose < minAgeDays) return false
+    }
     if (codes.includes(v.vaccine_code)) return true
     const name = (v.vaccine_name || '').toLowerCase()
     return namePatterns.some(p => name.includes(p))
@@ -133,15 +140,16 @@ export function calculateC2(data: PatientData): IndicatorResult {
     })
   }
 
-  // E: Vacinacao completa - Penta(3), VIP(3), Triplice Viral(1), Pneumo 10V(2) (20 pts)
+  // E: Vacinacao completa - Penta(3), VIP(3), SCR(2 apos 12m), Pneumo 10V(2) (20 pts)
   const pentaDoses = countVaccineDoses(vaccinations, PENTA_CODES, ['penta', 'dtp', 'pentavalente'])
   const vipDoses = countVaccineDoses(vaccinations, VIP_CODES, ['vip', 'polio inativada', 'salk'])
-  const scrDoses = countVaccineDoses(vaccinations, SCR_CODES, ['triplice viral', 'scr', 'sarampo'])
+  // SCR: 2 doses, nao considerar doses antes de 12 meses de vida (365 dias)
+  const scrDoses = countVaccineDoses(vaccinations, SCR_CODES, ['triplice viral', 'scr', 'sarampo', 'scrv'], 365, dayOfBirth)
   const pneumoDoses = countVaccineDoses(vaccinations, PNEUMO_CODES, ['pneumo', 'pneumococica'])
 
   const pentaOk = pentaDoses >= 3
   const vipOk = vipDoses >= 3
-  const scrOk = scrDoses >= 1
+  const scrOk = scrDoses >= 2
   const pneumoOk = pneumoDoses >= 2
   const achievedE = pentaOk && vipOk && scrOk && pneumoOk
 
@@ -149,7 +157,7 @@ export function calculateC2(data: PatientData): IndicatorResult {
   const vaccineDetails: string[] = []
   vaccineDetails.push(`Penta ${pentaDoses}/3${pentaOk ? ' OK' : ''}`)
   vaccineDetails.push(`VIP ${vipDoses}/3${vipOk ? ' OK' : ''}`)
-  vaccineDetails.push(`SCR ${scrDoses}/1${scrOk ? ' OK' : ''}`)
+  vaccineDetails.push(`SCR ${scrDoses}/2${scrOk ? ' OK' : ''}`)
   vaccineDetails.push(`Pneumo ${pneumoDoses}/2${pneumoOk ? ' OK' : ''}`)
 
   practices.push({

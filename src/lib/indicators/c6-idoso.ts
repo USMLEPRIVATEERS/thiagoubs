@@ -18,8 +18,8 @@ function isAcsTacs(cbo: string): boolean {
   return norm === ACS_CBO || norm === TACS_CBO
 }
 
-// Codigos de vacina influenza no e-SUS
-const INFLUENZA_CODES = ['86', '85', '37', '39']
+// Codigos oficiais de vacina influenza
+const INFLUENZA_CODES = ['33', '77'] // 33=trivalente, 77=tetravalente
 
 export function calculateC6(data: PatientData): IndicatorResult {
   const { patient, consultations, measurements, homeVisits, vaccinations } = data

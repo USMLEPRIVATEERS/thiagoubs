@@ -6,7 +6,7 @@ import { getClassification } from '@/lib/utils/scoring'
 const ACS_CBO = '515105'
 const TACS_CBO = '322255'
 const HBA1C_CODE = '02.02.01.050-3'
-const EXAME_PE_CODE = '02.01.01.059-0' // Avaliacao/acompanhamento pe diabetico
+const EXAME_PE_CODE = '03.01.04.009-5' // Exame do pe diabetico (SIGTAP oficial)
 
 function isMedEnf(cbo?: string, type?: string): boolean {
   if (cbo) {

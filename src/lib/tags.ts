@@ -48,7 +48,7 @@ const C2: IndicatorSpec = {
     { tag: 'C2-B', label: '≥9 consultas médico/enf até 2 anos', points: 20, exemptEAP76: false },
     { tag: 'C2-C', label: '≥9 registros peso+altura até 2 anos', points: 20, exemptEAP76: false },
     { tag: 'C2-D', label: '≥2 visitas ACS (1ª até 30d, 2ª até 6m)', points: 20, exemptEAP76: true },
-    { tag: 'C2-E', label: 'Vacinação completa (Penta+VIP+Tríplice+Pneumo)', points: 20, exemptEAP76: false },
+    { tag: 'C2-E', label: 'Vacinação completa (Penta 3d + VIP 3d + SCR 2d + Pneumo 2d)', points: 20, exemptEAP76: false },
   ],
   maxPoints: 100,
 }
