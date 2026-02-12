@@ -7,7 +7,8 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
 import type { Patient } from '@/types/database'
-import { INDICATORS, calculateScore, getTagColor } from '@/lib/tags'
+import { INDICATORS, calculateScore, calculateC7TeamScore, isC7Eligible, C7_PRACTICE_ELIGIBILITY, getTagColor } from '@/lib/tags'
+import type { C7TeamResult } from '@/lib/tags'
 import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
 import { ageInYears } from '@/lib/utils/dates'
 
@@ -58,8 +59,15 @@ export default function IndicatorDetailPage() {
   )
 
   const eligible = ind
-    ? filteredPatients.filter(p => ind.eligibilityTags.some(t => (p.tags || []).includes(t)))
+    ? indicator === 'C7'
+      ? filteredPatients.filter(p => isC7Eligible(p))
+      : filteredPatients.filter(p => ind.eligibilityTags.some(t => (p.tags || []).includes(t)))
     : []
+
+  // C7 team-level score
+  const c7TeamResult: C7TeamResult | null = indicator === 'C7' && eligible.length > 0
+    ? calculateC7TeamScore(eligible)
+    : null
 
   // Calculate scores and sort by score ascending (worst first)
   const patientScores = eligible.map(p => ({
@@ -67,21 +75,25 @@ export default function IndicatorDetailPage() {
     ...calculateScore(p.tags || [], indicator, p.team_type),
   })).sort((a, b) => a.percentage - b.percentage)
 
+  const isC7 = indicator === 'C7'
+
   function exportCSV() {
     if (patientScores.length === 0 || !ind) return
-    const headers = ['Nome', 'Idade', 'Sexo', 'MA', 'Equipe', 'Pontos', 'Max', '%', 'Classificacao', ...ind.practices.map(p => p.tag)]
-    const csvRows = patientScores.map(ps => [
-      ps.patient.name,
-      ageInYears(ps.patient.date_of_birth),
-      ps.patient.sex,
-      ps.patient.micro_area || '-',
-      ps.patient.team_type,
-      ps.score,
-      ps.maxPossible,
-      ps.percentage.toFixed(0),
-      classificationLabel(getClassification(ps.percentage, 100)),
-      ...ps.practices.map(p => p.exempt ? 'ISENTO' : p.achieved ? 'SIM' : 'NAO'),
-    ])
+    const headers = ['Nome', 'Idade', 'Sexo', 'MA', 'Equipe', ...(isC7 ? ['Faixa'] : ['Pontos', 'Max', '%', 'Classificacao']), ...ind.practices.map(p => p.tag)]
+    const csvRows = patientScores.map(ps => {
+      const eligTag = isC7
+        ? (ind.eligibilityTags.find(t => (ps.patient.tags || []).includes(t)) || '-')
+        : undefined
+      return [
+        ps.patient.name,
+        ageInYears(ps.patient.date_of_birth),
+        ps.patient.sex,
+        ps.patient.micro_area || '-',
+        ps.patient.team_type,
+        ...(isC7 ? [eligTag] : [ps.score, ps.maxPossible, ps.percentage.toFixed(0), classificationLabel(getClassification(ps.percentage, 100))]),
+        ...ps.practices.map(p => p.exempt ? 'ISENTO' : p.achieved ? 'SIM' : 'NAO'),
+      ]
+    })
     const csv = [headers, ...csvRows].map(row => row.join(';')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -121,14 +133,18 @@ export default function IndicatorDetailPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
             <h3 className="text-xs font-semibold text-gray-900 mb-2">Boas Praticas</h3>
             <div className="space-y-1">
-              {ind.practices.map(p => (
-                <div key={p.tag} className="flex items-center gap-2 text-xs">
-                  <span className={`px-2 py-0.5 rounded font-mono font-bold ${getTagColor(p.tag)}`}>{p.tag}</span>
-                  <span className="text-gray-700">{p.label}</span>
-                  <span className="text-gray-400 ml-auto">{p.points} pts</span>
-                  {p.exemptEAP76 && <span className="text-amber-600 text-xs">(isento eAP 76)</span>}
-                </div>
-              ))}
+              {ind.practices.map(p => {
+                const ageGroup = isC7 ? C7_PRACTICE_ELIGIBILITY[p.tag] : null
+                return (
+                  <div key={p.tag} className="flex items-center gap-2 text-xs">
+                    <span className={`px-2 py-0.5 rounded font-mono font-bold ${getTagColor(p.tag)}`}>{p.tag}</span>
+                    <span className="text-gray-700">{p.label}</span>
+                    {ageGroup && <span className="text-teal-600 text-xs">({ageGroup})</span>}
+                    <span className="text-gray-400 ml-auto">{isC7 ? `peso ${p.points}%` : `${p.points} pts`}</span>
+                    {p.exemptEAP76 && <span className="text-amber-600 text-xs">(isento eAP 76)</span>}
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}
@@ -141,6 +157,40 @@ export default function IndicatorDetailPage() {
               onToggle={(area) => setSelectedMicroAreas(prev => prev.includes(area) ? prev.filter(a => a !== area) : [...prev, area])}
               onSelectAll={() => setSelectedMicroAreas(microAreas)}
             />
+          </div>
+        )}
+
+        {/* C7 team-level score summary */}
+        {c7TeamResult && (
+          <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-teal-900">Score da Equipe (C7)</h3>
+              <span className={`px-3 py-1 rounded-full text-sm font-bold ${classificationBg(getClassification(c7TeamResult.score, 100))}`}>
+                {c7TeamResult.score.toFixed(1)}%
+              </span>
+            </div>
+            <p className="text-xs text-teal-700 mb-3">
+              Formula: (A + B + C + D) x 100. Cada BP tem denominador separado por faixa etaria.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {c7TeamResult.subScores.map(sub => (
+                <div key={sub.tag} className="bg-white rounded-lg p-3 border border-teal-100">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-bold text-gray-700">{sub.tag}</span>
+                    <span className="text-xs font-medium text-teal-700">peso {(sub.weight * 100).toFixed(0)}%</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mb-1">{sub.label}</p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                      <div className="h-1.5 rounded-full bg-teal-500" style={{ width: `${Math.min(sub.ratio * 100, 100)}%` }} />
+                    </div>
+                    <span className="text-xs font-bold text-gray-700">
+                      {sub.achieved}/{sub.eligible} ({(sub.ratio * 100).toFixed(0)}%)
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -174,7 +224,11 @@ export default function IndicatorDetailPage() {
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Idade</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">MA</th>
                     <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Equipe</th>
-                    <th className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Score</th>
+                    {isC7 ? (
+                      <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Faixa</th>
+                    ) : (
+                      <th className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">Score</th>
+                    )}
                     {ind.practices.map(p => (
                       <th key={p.tag} className="text-center text-xs font-medium text-gray-500 uppercase tracking-wider px-2 py-3" title={p.label}>
                         {p.tag.split('-')[1]}
@@ -185,6 +239,9 @@ export default function IndicatorDetailPage() {
                 <tbody className="divide-y divide-gray-100">
                   {patientScores.map(ps => {
                     const cls = getClassification(ps.percentage, 100)
+                    const eligTag = isC7
+                      ? ind.eligibilityTags.find(t => (ps.patient.tags || []).includes(t))
+                      : undefined
                     return (
                       <tr key={ps.patient.id} className="hover:bg-gray-50 transition">
                         <td className="px-4 py-3">
@@ -195,22 +252,33 @@ export default function IndicatorDetailPage() {
                         <td className="px-4 py-3 text-sm text-gray-600">{ageInYears(ps.patient.date_of_birth)}a</td>
                         <td className="px-4 py-3 text-sm text-gray-600">{ps.patient.micro_area || '-'}</td>
                         <td className="px-4 py-3 text-xs text-gray-500">{ps.patient.team_type === 76 ? 'eAP' : 'eSF'}</td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${classificationBg(cls)}`}>
-                            {ps.score}/{ps.maxPossible} ({ps.percentage.toFixed(0)}%)
-                          </span>
-                        </td>
-                        {ps.practices.map(p => (
-                          <td key={p.tag} className="px-2 py-3 text-center">
-                            {p.exempt ? (
-                              <span className="text-xs text-gray-400" title="Isento eAP 76">—</span>
-                            ) : p.achieved ? (
-                              <span className="text-green-600 font-bold text-sm" title={`${p.label} (${p.points}pts)`}>✓</span>
-                            ) : (
-                              <span className="text-red-400 text-sm" title={`${p.label} (${p.points}pts)`}>✗</span>
-                            )}
+                        {isC7 ? (
+                          <td className="px-4 py-3 text-xs text-gray-500">{eligTag || '-'}</td>
+                        ) : (
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${classificationBg(cls)}`}>
+                              {ps.score}/{ps.maxPossible} ({ps.percentage.toFixed(0)}%)
+                            </span>
                           </td>
-                        ))}
+                        )}
+                        {ps.practices.map(p => {
+                          // For C7, check if this patient is in the right age group for this practice
+                          const practiceEligTag = isC7 ? C7_PRACTICE_ELIGIBILITY[p.tag] : null
+                          const isEligibleForPractice = practiceEligTag ? (ps.patient.tags || []).includes(practiceEligTag) : true
+                          return (
+                            <td key={p.tag} className="px-2 py-3 text-center">
+                              {!isEligibleForPractice ? (
+                                <span className="text-xs text-gray-300" title="Faixa etaria diferente">-</span>
+                              ) : p.exempt ? (
+                                <span className="text-xs text-gray-400" title="Isento eAP 76">—</span>
+                              ) : p.achieved ? (
+                                <span className="text-green-600 font-bold text-sm" title={`${p.label} (${p.points}pts)`}>✓</span>
+                              ) : (
+                                <span className="text-red-400 text-sm" title={`${p.label} (${p.points}pts)`}>✗</span>
+                              )}
+                            </td>
+                          )
+                        })}
                       </tr>
                     )
                   })}

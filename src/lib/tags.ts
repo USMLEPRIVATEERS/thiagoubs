@@ -218,6 +218,68 @@ export function getTagLabel(tag: string): string {
 }
 
 // ============================================================
+// C7 Gender exclusion
+// Exclude: sex=F with gender_identity='Mulher transgênero'
+// ============================================================
+export function isC7Eligible(patient: { sex: 'M' | 'F'; gender_identity?: string; tags?: string[] }): boolean {
+  if (patient.sex === 'F' && patient.gender_identity === 'Mulher transgênero') return false
+  return C7.eligibilityTags.some(t => (patient.tags || []).includes(t))
+}
+
+// ============================================================
+// C7 Team-level formula
+// Score = (A + B + C + D) × 100
+// Each = (nº achieving / nº eligible in age group) × weight
+// ============================================================
+export interface C7SubScore {
+  tag: string
+  label: string
+  weight: number
+  eligible: number
+  achieved: number
+  ratio: number
+  weighted: number
+}
+
+export interface C7TeamResult {
+  score: number
+  subScores: C7SubScore[]
+}
+
+export function calculateC7TeamScore(
+  patients: { sex: 'M' | 'F'; gender_identity?: string; tags?: string[]; team_type: 70 | 76 }[]
+): C7TeamResult {
+  // Filter out gender-excluded patients
+  const eligible = patients.filter(p => isC7Eligible(p))
+
+  const subScores: C7SubScore[] = C7.practices.map(practice => {
+    const eligTag = C7_PRACTICE_ELIGIBILITY[practice.tag]
+    const weight = practice.points / 100 // e.g. 20 -> 0.20
+
+    // Eligible for this specific sub-indicator
+    const eligibleForPractice = eligible.filter(p => (p.tags || []).includes(eligTag))
+    const achievedCount = eligibleForPractice.filter(p => (p.tags || []).includes(practice.tag)).length
+
+    const ratio = eligibleForPractice.length > 0 ? achievedCount / eligibleForPractice.length : 0
+    const weighted = ratio * weight
+
+    return {
+      tag: practice.tag,
+      label: practice.label,
+      weight,
+      eligible: eligibleForPractice.length,
+      achieved: achievedCount,
+      ratio,
+      weighted,
+    }
+  })
+
+  const score = subScores.reduce((sum, s) => sum + s.weighted, 0) * 100
+
+  return { score, subScores }
+}
+
+// ============================================================
 // Scoring functions
 // ============================================================
 

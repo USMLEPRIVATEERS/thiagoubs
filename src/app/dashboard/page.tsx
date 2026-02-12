@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/ui/Navbar'
 import MicroAreaFilter from '@/components/dashboard/MicroAreaFilter'
 import type { Patient } from '@/types/database'
-import { INDICATOR_LIST, calculateScore, getTagColor, ELIGIBILITY_TAGS } from '@/lib/tags'
+import { INDICATOR_LIST, calculateScore, calculateC7TeamScore, isC7Eligible, getTagColor, ELIGIBILITY_TAGS } from '@/lib/tags'
 import { getClassification, classificationBg, classificationLabel } from '@/lib/utils/scoring'
 
 export default function DashboardPage() {
@@ -58,22 +58,37 @@ export default function DashboardPage() {
 
   // Calculate indicator summaries using proper scoring
   const indicatorSummaries = INDICATOR_LIST.map(ind => {
-    // Eligible patients for this indicator
+    // C7 uses team-level formula with separate denominators per age group
+    if (ind.code === 'C7') {
+      const c7eligible = filteredPatients.filter(p => isC7Eligible(p))
+      const c7result = calculateC7TeamScore(c7eligible)
+      const classification = getClassification(c7result.score, 100)
+      return {
+        code: ind.code,
+        name: ind.name,
+        description: ind.description,
+        totalEligible: c7eligible.length,
+        avgPct: c7result.score,
+        classification,
+        counts: { otimo: 0, bom: 0, suficiente: 0, regular: 0 },
+        isTeamLevel: true,
+        c7SubScores: c7result.subScores,
+      }
+    }
+
+    // C2-C6: per-patient scoring
     const eligible = filteredPatients.filter(p =>
       ind.eligibilityTags.some(t => (p.tags || []).includes(t))
     )
 
-    // Calculate score for each eligible patient
     const scores = eligible.map(p => calculateScore(p.tags || [], ind.code, p.team_type))
 
-    // Average percentage across all eligible patients
     const avgPct = scores.length > 0
       ? scores.reduce((sum, s) => sum + s.percentage, 0) / scores.length
       : 0
 
     const classification = getClassification(avgPct, 100)
 
-    // Count by classification
     const counts = { otimo: 0, bom: 0, suficiente: 0, regular: 0 }
     for (const s of scores) {
       const c = getClassification(s.percentage, 100)
@@ -88,6 +103,8 @@ export default function DashboardPage() {
       avgPct,
       classification,
       counts,
+      isTeamLevel: false,
+      c7SubScores: undefined as undefined,
     }
   })
 
@@ -178,13 +195,24 @@ export default function DashboardPage() {
                       <div className={`h-2 rounded-full ${barMap[color]}`} style={{ width: `${Math.min(s.avgPct, 100)}%` }} />
                     </div>
 
-                    {/* Classification counts */}
-                    <div className="flex gap-2 text-xs mt-2">
-                      {s.counts.otimo > 0 && <span className="bg-green-100 text-green-700 px-1.5 rounded">Ot: {s.counts.otimo}</span>}
-                      {s.counts.bom > 0 && <span className="bg-blue-100 text-blue-700 px-1.5 rounded">Bom: {s.counts.bom}</span>}
-                      {s.counts.suficiente > 0 && <span className="bg-orange-100 text-orange-700 px-1.5 rounded">Suf: {s.counts.suficiente}</span>}
-                      {s.counts.regular > 0 && <span className="bg-red-100 text-red-700 px-1.5 rounded">Reg: {s.counts.regular}</span>}
-                    </div>
+                    {/* Classification counts or C7 sub-scores */}
+                    {s.isTeamLevel && s.c7SubScores ? (
+                      <div className="space-y-0.5 text-xs mt-2">
+                        {s.c7SubScores.map(sub => (
+                          <div key={sub.tag} className="flex justify-between">
+                            <span className="text-gray-600">{sub.tag}: {sub.achieved}/{sub.eligible}</span>
+                            <span className="font-medium">{(sub.ratio * 100).toFixed(0)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex gap-2 text-xs mt-2">
+                        {s.counts.otimo > 0 && <span className="bg-green-100 text-green-700 px-1.5 rounded">Ot: {s.counts.otimo}</span>}
+                        {s.counts.bom > 0 && <span className="bg-blue-100 text-blue-700 px-1.5 rounded">Bom: {s.counts.bom}</span>}
+                        {s.counts.suficiente > 0 && <span className="bg-orange-100 text-orange-700 px-1.5 rounded">Suf: {s.counts.suficiente}</span>}
+                        {s.counts.regular > 0 && <span className="bg-red-100 text-red-700 px-1.5 rounded">Reg: {s.counts.regular}</span>}
+                      </div>
+                    )}
                     <p className="text-xs text-gray-400 mt-1">{s.totalEligible} elegiveis</p>
                   </Link>
                 )
